@@ -152,6 +152,7 @@ export function tone(t, status) {
 export default class Spaces extends View {
   init(_props, cx) {
     this.git = {}; // where() -> { name, branch, ahead, behind, repo, linked }, null: not a repo
+    this.trees = {}; // repo -> [{ path, branch }], every checkout of it but the main one
     this.checked = {}; // where() -> when it was last looked at
     this.unsure = new Set(); // where()s git couldn't answer for (a machine away)
     this.pending = new Set(); // where()s to look at next
@@ -203,17 +204,24 @@ export default class Spaces extends View {
     const at = {};
     for (const s of sp) at[s.id] = where(s, ps);
     const keys = new Set(Object.values(at).filter((k) => JSON.parse(k)[1]));
+    // Repos a space just left. Closing a worktree's space often means the
+    // worktree went with it, so ask again rather than letting it linger as a
+    // ghost row until the fallback comes round.
+    const left = new Set();
     for (const k of Object.keys(this.git)) if (!keys.has(k)) {
+      if (this.git[k]) left.add(this.git[k].repo);
       delete this.git[k];
       delete this.checked[k];
       this.unsure.delete(k);
     }
     const repos = new Set(Object.values(this.git).filter(Boolean).map((g) => g.repo));
+    for (const k of Object.keys(this.trees)) if (!repos.has(k)) delete this.trees[k];
     for (const [repo, pending] of this.watching) if (!repos.has(JSON.stringify([null, portablePath(repo)]))) {
       this.watching.delete(repo);
       pending.cancel();
     }
     const due = new Set([...keys].filter((k) => !(k in this.git)));
+    if (left.size) for (const [k, g] of Object.entries(this.git)) if (g && left.has(g.repo)) due.add(k);
     for (const [id, k] of Object.entries(at)) if (this.at[id] && this.at[id] !== k && keys.has(k)) due.add(k);
     this.at = at;
     const spaceOf = {};
@@ -348,12 +356,33 @@ export default class Spaces extends View {
       const [ahead, behind] = counts.code === 0 ? counts.stdout.trim().split(/\s+/).map(Number) : [0, 0];
       const info = { name, branch: branch.code === 0 ? branch.stdout.trim().replace(/^refs\/heads\//, "") : "(detached)", ahead, behind, repo: JSON.stringify([on, portablePath(repo)]), linked: portablePath(repo) !== portablePath(`${top}/.git`) };
       this.git[key] = info;
+      // Only the main checkout is asked, so one repo is listed once however
+      // many of its checkouts are open.
+      if (!info.linked) await this.checkTrees(info.repo, cwd, on);
       if (!on) this.watch(repo, cx);
     } catch {
       // Couldn't ask (the machine is away): keep what it showed, look again later.
       this.git[key] ??= null;
       this.unsure.add(key);
     }
+  }
+
+  // A repo's other checkouts, so ones nobody opened a space for can still be
+  // seen and opened from the sidebar (another tool may have made them).
+  async checkTrees(repoKey, cwd, on) {
+    const list = await exec("git", ["worktree", "list", "--porcelain"], { cwd, on });
+    if (list.code !== 0) return;
+    const out = [];
+    let main = true; // git lists the main checkout first, and it is not a worktree
+    for (const block of list.stdout.split(/\n\n+/)) {
+      const lines = block.split("\n");
+      const path = lines.find((l) => l.startsWith("worktree "))?.slice(9);
+      // Bare and prunable entries have no working tree to open.
+      if (!path || lines.some((l) => l === "bare" || l.startsWith("prunable"))) continue;
+      if (main) { main = false; continue; }
+      out.push({ path, branch: lines.find((l) => l.startsWith("branch "))?.slice(7).replace(/^refs\/heads\//, "") ?? null });
+    }
+    this.trees[repoKey] = out;
   }
 
   watch(repo, cx) {
@@ -450,6 +479,29 @@ export default class Spaces extends View {
     return groupList().some((g) => g.id === group && (g.machine ?? null) === machine) ? group : DEFAULT_GROUP_ID;
   }
 
+  // A project's worktrees that no space is open on. A space sits in the
+  // deepest checkout containing it, so a main checkout doesn't claim a
+  // worktree nested inside it (Claude Code puts them in .claude/worktrees).
+  ghosts(row, ps) {
+    if (row.parent || !row.g || row.g.linked) return [];
+    const list = this.trees[row.g.repo] ?? [];
+    if (!list.length) return [];
+    const machine = row.w.machine ?? null;
+    const paths = list.map((w) => portablePath(w.path));
+    const taken = new Set();
+    for (const s of spaces()) {
+      if ((s.machine ?? null) !== machine) continue;
+      const at = portablePath(place(s, ps) ?? "");
+      if (!at) continue;
+      let best = null;
+      for (const p of paths) {
+        if ((at === p || at.startsWith(p + "/")) && (!best || p.length > best.length)) best = p;
+      }
+      if (best) taken.add(best);
+    }
+    return list.filter((w) => !taken.has(portablePath(w.path)));
+  }
+
   toggleProject(key, cx) {
     if (!this.projectFolds.delete(key)) this.projectFolds.add(key);
     localStorage.setItem("projects.folded", JSON.stringify([...this.projectFolds]));
@@ -476,6 +528,7 @@ export default class Spaces extends View {
   sections(rows, t, machine) {
     const projects = rows.filter(row => !row.parent);
     const items = [];
+    const ps = panes();
     let active = -1;
     const groups = groupsOn(machine);
     const dragging = this.pressed !== null
@@ -513,13 +566,15 @@ export default class Spaces extends View {
         const projectFold = `project-${row.w.id}`;
         const projectClosed = this.projectFolds.has(projectFold);
         const childActive = projectClosed && row.children.some(child => child.w.active);
+        const ghosts = this.ghosts(row, ps);
         if (row.w.active || childActive) active = items.length;
-        items.push(this.row(row, t, { projectFold, projectClosed, childActive, group: key }));
+        items.push(this.row(row, t, { projectFold, projectClosed, childActive, group: key, ghosts: ghosts.length }));
         if (projectClosed) continue;
         for (const child of row.children) {
           if (child.w.active) active = items.length;
           items.push(this.row(child, t, { group: key }));
         }
+        for (const tree of ghosts) items.push(this.ghostRow(row, tree, t));
       }
     }
     return { items, active };
@@ -637,14 +692,37 @@ export default class Spaces extends View {
       .when(g.behind > 0, (el) => el.child(div().flex_none().text_color(t.ansi1).child(`\u2193${g.behind}`)));
   }
 
-  row(row, t, { projectFold, projectClosed, childActive, group } = {}) {
+  // A worktree with no space on it: dim, and opening one is a click away.
+  ghostRow(project, tree, t) {
+    const machine = project.w.machine ?? null;
+    return h_flex()
+      .id(`tree-${machine ?? "local"}-${tree.path}`)
+      .h(rowHeight({ tree: true }))
+      .flex_none()
+      .pl(47)
+      .pr(8)
+      .gap(9)
+      .items_center()
+      .rounded(8)
+      .opacity(0.6)
+      .cursor_pointer()
+      .hover((s) => s.bg(t.hover).opacity(1))
+      .tooltip(`${tree.path} — 클릭하면 Space로 엽니다`)
+      .on_click(() => run("space.new", { folder: tree.path, machine: machine ?? "" }))
+      .child(svg("mods/workspace-chrome/branch.svg").size(13).flex_none().text_color(t.dim))
+      .child(div().flex_initial().min_w(SIDE_MIN).truncate().text_color(t.muted).child(base(tree.path)))
+      .child(h_flex().flex_auto().min_w(0).justify_end().text_size(11.5).text_color(t.dim)
+        .child(div().min_w(0).truncate().child(tree.branch ?? "detached")));
+  }
+
+  row(row, t, { projectFold, projectClosed, childActive, group, ghosts } = {}) {
     const { w, i, g, tree, children } = row;
     const on = w.active;
     const fromIndex = this.pressed === null ? -1 : spaces().findIndex(s => s.id === this.pressed);
     const colors = shared("space.colors") ?? {};
     const color = colors[w.id] ?? "ansi6";
     const fill = color.startsWith("#") ? color : (MARK[color] ?? t[color]);
-    const hasWorktrees = Boolean(children?.length);
+    const hasWorktrees = Boolean(children?.length || ghosts);
     const item = v_flex()
       .relative()
       .id(`space-${w.id}`)
