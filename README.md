@@ -1,6 +1,8 @@
 # Herdr Config
 
-Herdr App의 **Herdr Workspace** 레이아웃입니다. 두 운영체제에서 프로젝트와 워크트리를 분류하고, Space 맵과 Agents 상태를 확인하며, 파일 검색·Git Changes·탭 잠금을 사용할 수 있습니다.
+Herdr App의 **Herdr Workspace** 레이아웃입니다. 두 운영체제에서 프로젝트와 워크트리를 머신별 그룹으로 묶고, Space 맵과 Agents 상태를 확인하며, 파일 검색·Git Changes·탭 잠금을 사용할 수 있습니다.
+
+그룹은 이름뿐이고 경로 규칙이 없습니다. Space는 사이드바에서 끌어다 놓거나 우클릭해 그룹에 넣고, 그룹 자체는 Spaces 머리말의 **그룹 설정**에서 머신마다 추가·이름 변경·삭제합니다.
 
 Herdr App을 한 번 실행해 기본 설정을 만든 뒤 이 저장소를 받습니다. 두 PC에 같은 구성을 맞출 때는 같은 Git 커밋을 사용합니다. Git 기능에는 해당 PC에서 Herdr가 실행할 수 있는 Git이 필요합니다.
 
@@ -11,7 +13,7 @@ cd herdr-config
 
 ## macOS
 
-`jq`가 설치된 Mac에서 `--group-folder`에 실제 경로를 넣고 실행합니다. 폴더가 여러 개면 옵션을 반복합니다. 이 옵션을 생략하면 이미 설치된 그룹 경로를 유지합니다.
+`jq`가 설치된 Mac에서 실행합니다. `--group-folder`는 처음 한 번 그 폴더 아래 Space를 묶은 그룹 하나를 만들어 주는 편의 옵션이며, 생략하면 그룹 없이 시작해 앱에서 직접 만들면 됩니다.
 
 ```sh
 ./macos/install.sh --group-folder "$HOME/Work"
@@ -21,7 +23,7 @@ Herdr에서 **Herdr Workspace** 레이아웃을 선택합니다. Mac 버전 하�
 
 ## Windows
 
-PowerShell에서 실제 그룹 폴더를 넣고 실행합니다. 여러 폴더는 쉼표로 구분합니다.
+PowerShell에서 실행합니다. `-GroupFolder`도 마찬가지로 초기 그룹 하나를 만드는 용도이며, 여러 폴더는 쉼표로 구분합니다.
 
 ```powershell
 .\windows\Install.ps1 -GroupFolder 'D:\Work','C:\Projects'
@@ -33,7 +35,7 @@ Herdr에서 **Herdr Workspace · Windows** 레이아웃을 선택합니다. Wind
 
 Herdr에서 에이전트에게 이 저장소의 주소와 해당 운영체제의 `RECIPE.md`, 그 PC의 그룹 폴더 경로를 알려주면 됩니다. 두 설치 스크립트는 기존 단축키를 병합하고 백업을 남깁니다. 이름이 같은 Mod에 다른 파일이 있으면 먼저 확인을 요청할 수 있습니다.
 
-그룹 경로와 개별 앱 설정, 탭·세션 기록, 인증 정보는 각 PC에 있습니다. 저장소에는 배포용 레이아웃, Mod 소스와 추가 단축키만 들어 있습니다.
+그룹 구성과 개별 앱 설정, 탭·세션 기록, 인증 정보는 각 PC에 있습니다. 저장소에는 배포용 레이아웃, Mod 소스와 추가 단축키만 들어 있습니다.
 
 설치 스크립트는 샘플 설정으로 검증했습니다. Windows의 실제 Explorer 및 키 입력 검증 범위는 [Windows 안내](windows/README.md#확인-범위)에 정리했습니다.
 
