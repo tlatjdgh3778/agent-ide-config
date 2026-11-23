@@ -1,6 +1,6 @@
 import { View, div, svg, image, PathBuilder } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
-import { agents, layout, run, settings, shared, spaces, theme } from "herdr";
+import { agents, layout, run, settings, shared, setShared, spaces, theme } from "herdr";
 
 const ASSETS = "mods/workspace-chrome";
 const STATUS = [
@@ -9,7 +9,60 @@ const STATUS = [
   ["done", "완료"],
   ["idle", "유휴"],
 ];
-const CATEGORIES = [["company", "지정 그룹"], ["personal", "기본 그룹"]];
+
+// See pc-win-spaces/main.js for the full comment on this model; duplicated
+// here since each mod is its own sandbox with no shared imports.
+const DEFAULT_GROUP_ID = "__default__";
+
+function find(node, id) {
+  if (node?.id === id) return node;
+  for (const child of node?.children ?? []) {
+    const found = find(child, id);
+    if (found) return found;
+  }
+  return null;
+}
+
+function installFolders() {
+  return find(layout(), "spaces")?.content?.props?.companyFolders ?? [];
+}
+
+function migrate() {
+  const haveList = shared("groups.list") !== undefined;
+  const haveAssign = shared("groups.assignments") !== undefined;
+  if (haveList && haveAssign) return;
+  const oldLabels = shared("personal-company.labels");
+  const l = oldLabels && typeof oldLabels === "object" ? oldLabels : {};
+  if (!haveList) {
+    const storedFolders = shared("personal-company.folders");
+    const oldFolders = Array.isArray(storedFolders) ? storedFolders : installFolders();
+    setShared("groups.list", oldFolders.length || l.company
+      ? [{ id: "company", machine: null, name: l.company || "지정 그룹", folders: oldFolders }] : []);
+  }
+  if (!haveAssign) {
+    const oldAssign = shared("personal-company.categories");
+    const next = {};
+    if (oldAssign && typeof oldAssign === "object") {
+      for (const [id, cat] of Object.entries(oldAssign)) next[id] = cat === "company" ? "company" : DEFAULT_GROUP_ID;
+    }
+    setShared("groups.assignments", next);
+  }
+}
+
+function groupList() {
+  migrate();
+  const list = shared("groups.list");
+  return Array.isArray(list) ? list : [];
+}
+
+// Every machine's groups share one column list here, since the map draws all
+// machines together; spaces in no group come last, under a plain heading.
+function allGroups() {
+  return [
+    ...groupList().map(({ id, name }) => ({ id, name })),
+    { id: DEFAULT_GROUP_ID, name: "그룹 없음" },
+  ];
+}
 
 const shortTitle = (agent) => {
   const title = (agent.title ?? "").replace(/^\[ [!.] \] /, "")
@@ -27,22 +80,9 @@ function groupsFor(list) {
   })).filter(group => group.agents.length > 0);
 }
 
-const portablePath = path => {
-  const normalized = path.replace(/\\/g, "/").replace(/\/+$/, "");
-  return /^[A-Za-z]:\/|^\/\//.test(path.replace(/\\/g, "/")) ? normalized.toLowerCase() : normalized;
-};
-const inFolder = (path, folder) => {
-  const full = portablePath(path), root = portablePath(folder);
-  return full === root || full.startsWith(root + "/");
-};
-
+// Group membership is explicit; a space nobody placed sits in the default one.
 function fallbackCategory(space, overrides) {
-  if (overrides[space.id]) return overrides[space.id];
-  const sidebar = layout()?.children?.find(node => node.id === "sidebar");
-  const lists = sidebar?.children?.find(node => node.id === "sidebar-lists");
-  const folders = lists?.children?.find(node => node.id === "spaces")?.content?.props?.companyFolders ?? [];
-  return Boolean(space.folder) && folders.some(folder => inFolder(space.folder, folder))
-    ? "company" : "personal";
+  return overrides[space.id] ?? DEFAULT_GROUP_ID;
 }
 
 function buildMap(allSpaces, allAgents, metadata, overrides, scope) {
@@ -61,7 +101,7 @@ function buildMap(allSpaces, allAgents, metadata, overrides, scope) {
   const visible = scope === "current"
     ? roots.filter(root => root.space.id === active?.id || root.children.some(child => child.space.id === active?.id))
     : roots;
-  const categories = CATEGORIES.map(([id, name]) => ({
+  const categories = allGroups().map(({ id, name }) => ({
     id, name,
     projects: visible.filter(root => (overrides[root.space.id] ?? metadata[root.space.id]?.category
       ?? fallbackCategory(root.space, overrides)) === id).map(root => ({
@@ -230,7 +270,7 @@ export default class SpaceMap extends View {
     const t = theme();
     const appZoom = settings().zoom || 1;
     const model = buildMap(spaces(), agents(), shared("personal-company.space-map.graph") ?? {},
-      shared("personal-company.categories") ?? {}, this.scope);
+      shared("groups.assignments") ?? {}, this.scope);
     const categories = this.scope === "current" ? model.categories.filter(category => category.projects.length) : model.categories;
     const plot = geometry(categories, this.viewport.width);
     const canFit = this.viewport.width > 0 && this.viewport.height > 0;
