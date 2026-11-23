@@ -1,0 +1,48 @@
+# 개인 / 회사 · Windows
+
+Herdr App용 레이아웃과 Mod 묶음입니다. 개인·회사 Spaces, 워크트리, Space 맵, Agents 읽음 표시, 탭 잠금, Files 검색과 Git Changes를 포함합니다.
+
+## Herdr 에이전트로 설치
+
+Windows에서 ZIP을 푼 뒤 Herdr 안에서 Codex나 Claude Code를 열고 아래 문구를 붙여넣습니다. 두 경로는 실제 압축 해제 위치와 회사 폴더로 바꿉니다.
+
+> 내 Herdr App의 AGENTS.md와 `C:\Users\me\Downloads\herdr-personal-company-windows\RECIPE.md`를 읽고 이 레이아웃을 추가해줘. 회사 폴더는 `D:\Work`야. 기존 레이아웃과 세션은 유지한 채, 설치한 Mod를 검사하고 개인 / 회사 · Windows를 열어줘.
+
+[설치 레시피](RECIPE.md)에 복사할 파일, 단축키 병합, Windows 경로와 앱 내 확인 방법이 있습니다.
+
+## PowerShell로 직접 설치
+
+1. Windows x64에서 Herdr App 0.1.16 이상을 한 번 열어 기본 설정을 만듭니다. 프로젝트·워크트리와 Git Changes 기능에는 Git for Windows가 필요합니다.
+2. ZIP을 풀고 그 폴더에서 PowerShell을 엽니다. 아래 경로를 Windows에 있는 실제 회사 폴더로 바꿉니다.
+
+   ```powershell
+   .\Install.ps1 -CompanyFolder 'C:\Work','D:\Company'
+   ```
+
+3. Herdr의 레이아웃 메뉴에서 **개인 / 회사 · Windows**를 선택합니다. 명령으로 전환하려면 다음을 실행합니다.
+
+   ```powershell
+   herdr-app do layout.switch --name personal-company-windows
+   ```
+
+설치 프로그램은 필요한 단축키만 Windows의 기존 키 설정에 합칩니다. 기본 구성 위치는 `%USERPROFILE%\.config\herdr-app`이며, `HERDR_APP_HOME`, `XDG_CONFIG_HOME` 또는 `-ConfigRoot`로 다른 위치를 지정할 수 있습니다. 기존 키 파일과 같은 이름의 레이아웃이 있으면 `backups` 아래에 복사본을 남깁니다. 폴더를 바꾸려면 새 경로로 설치 명령을 다시 실행합니다.
+
+## 사용
+
+- 회사 폴더 아래에 있는 Space는 회사로 표시됩니다. Git worktree는 같은 저장소에 속하면 프로젝트 아래에 표시됩니다. Space 우클릭 메뉴의 **개인으로 분류 / 회사로 분류**로 자동 분류를 바꿀 수 있습니다.
+- 탭 우클릭 메뉴에서 **잠금 / 잠금 해제**를 선택합니다. 잠긴 탭의 닫기 버튼과 우클릭의 닫기는 비활성화되며, 이 레이아웃의 `Ctrl+W`도 잠금을 검사합니다. 이 키는 이 레이아웃에서 터미널 프로그램에 전달되는 대신 탭 닫기에 사용됩니다.
+- Files에서 로컬 파일이나 폴더를 우클릭해 **탐색기에서 열기**를 선택합니다. 폴더는 탐색기에서 열리고, 파일은 상위 폴더에서 선택됩니다. 파일의 **Open with default app**은 Windows에 연결된 기본 앱으로 엽니다.
+- Mac에서 사용하던 Spaces와 터미널, 읽음 상태, 탭 잠금 기록은 각 머신의 상태입니다. 이 패키지에는 그런 기록과 인증 정보가 포함되지 않습니다. Windows에서 새로 만든 세션이나 Herdr에서 연결한 머신의 세션을 표시합니다.
+- Windows 레이아웃의 하단에는 Herdr 기본 상태바가 표시됩니다. 기존 Usage Limits 모드는 macOS/Linux 셸 도구를 사용합니다.
+
+## 확인 범위
+
+Mac의 PowerShell에서 설정 합치기, 경로 입력, 재설치와 충돌 처리 등을 확인했습니다. 포함된 Mod는 Mac의 Herdr 검사에서 통과했습니다. Windows에서 실제 Explorer 구동과 키 입력은 별도 확인이 필요합니다. Git Changes의 제작자도 Windows에서 테스트하지 않았다고 명시합니다.
+
+## 출처
+
+Herdr App 기본 모드를 바탕으로 만든 사용자 구성입니다. File Explorer와 Git Changes 코드는 아래 프로젝트에서 가져왔습니다. 원본 라이선스와 고지는 `licenses`에 있습니다.
+
+- [Herdr App](https://github.com/herdrdev/herdr-app)
+- [File Explorer](https://github.com/mchlkim/herdr-file-explorer)
+- [Git Changes](https://github.com/aBER0724/herdr-git-changes)

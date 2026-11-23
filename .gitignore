@@ -1,0 +1,17 @@
+.DS_Store
+gpui-kit.d.ts
+jsconfig.json
+.env
+.env.*
+settings.json
+shared.json
+view.json
+seen.json
+session.json
+installed.json
+window.json
+windows.json
+data/
+backups/
+node_modules/
+cache/

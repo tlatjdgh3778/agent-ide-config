@@ -1,0 +1,11 @@
+{
+  "layout:personal-company": {
+    "cmd-n": "mod.open:personal-company-menu",
+    "cmd-w": "personal-company-tabs.close"
+  },
+  "mod:file-viewer": {
+    "cmd-s": "file-viewer.save",
+    "cmd-shift-v": "file-viewer.preview",
+    "ctrl-w": "file-viewer.close"
+  }
+}

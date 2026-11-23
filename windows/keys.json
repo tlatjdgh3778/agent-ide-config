@@ -1,0 +1,10 @@
+{
+  "layout:personal-company-windows": {
+    "ctrl-n": "mod.open:pc-win-menu",
+    "ctrl-w": "pc-win-tabs.close"
+  },
+  "mod:pc-win-file-viewer": {
+    "ctrl-s": "pc-win-file-viewer.save",
+    "ctrl-shift-v": "pc-win-file-viewer.preview"
+  }
+}
