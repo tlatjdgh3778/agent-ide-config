@@ -5,10 +5,69 @@
 
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
-import { run, props, closeOverlay, openOverlay, theme, keys, terminals, spaces, panes, exec, pickFolder, shared, setShared, notify } from "herdr";
+import { run, props, closeOverlay, openOverlay, theme, keys, terminals, spaces, panes, exec, pickFolder, shared, setShared, notify, layout } from "herdr";
 
 const LOCKS = "personal-company.tab-locks";
 const lockedTabs = () => shared(LOCKS) ?? [];
+
+// See personal-company-spaces/main.js for the full comment on this model; duplicated
+// here since each mod is its own sandbox with no shared imports.
+const DEFAULT_GROUP_ID = "__default__";
+
+function find(node, id) {
+  if (node?.id === id) return node;
+  for (const child of node?.children ?? []) {
+    const found = find(child, id);
+    if (found) return found;
+  }
+  return null;
+}
+
+function installFolders() {
+  return find(layout(), "spaces")?.content?.props?.companyFolders ?? [];
+}
+
+function migrate() {
+  const haveList = shared("groups.list") !== undefined;
+  const haveAssign = shared("groups.assignments") !== undefined;
+  if (haveList && haveAssign) return;
+  const oldLabels = shared("personal-company.labels");
+  const l = oldLabels && typeof oldLabels === "object" ? oldLabels : {};
+  if (!haveList) {
+    const storedFolders = shared("personal-company.folders");
+    const oldFolders = Array.isArray(storedFolders) ? storedFolders : installFolders();
+    setShared("groups.list", oldFolders.length || l.company
+      ? [{ id: "company", machine: null, name: l.company || "지정 그룹", folders: oldFolders }] : []);
+  }
+  if (!haveAssign) {
+    const oldAssign = shared("personal-company.categories");
+    const next = {};
+    if (oldAssign && typeof oldAssign === "object") {
+      for (const [id, cat] of Object.entries(oldAssign)) next[id] = cat === "company" ? "company" : DEFAULT_GROUP_ID;
+    }
+    setShared("groups.assignments", next);
+  }
+}
+
+function groupList() {
+  migrate();
+  const list = shared("groups.list");
+  return Array.isArray(list) ? list : [];
+}
+
+// One machine's groups, then the bucket holding everything in none of them.
+function groupsOn(machine) {
+  const m = machine ?? null;
+  return [
+    ...groupList().filter((g) => (g.machine ?? null) === m),
+    { id: DEFAULT_GROUP_ID, machine: m, name: null },
+  ];
+}
+
+function assignments() {
+  const a = shared("groups.assignments");
+  return a && typeof a === "object" ? a : {};
+}
 
 // Where a space is now: its first terminal's live folder, else where it was made.
 function place(s) {
@@ -29,7 +88,7 @@ function items(p, git) {
   const tg = p.target ?? {};
   switch (p.tab ?? "new-space") {
     case "new-space":
-      return [["지정 그룹", "category.new", { category: "company" }], ["기본 그룹", "category.new", { category: "personal" }]];
+      return groupsOn(tg.machine).map((g) => [g.name ?? "그룹 없이", "category.new", { category: g.id }]);
     case "pane": {
       // A kept sub-agent can go back under its parent, still running.
       const all = terminals();
@@ -69,9 +128,11 @@ function items(p, git) {
       ];
     }
     case "space": {
-      const next = tg.category === "company" ? "personal" : "company";
+      const moves = groupsOn(tg.machine)
+        .filter((g) => g.id !== tg.category)
+        .map((g) => [g.name ? `${g.name}으로 이동` : "그룹에서 빼기", "category.move", { id: tg.project ?? tg.id, category: g.id }]);
       return [
-        [next === "company" ? "지정 그룹으로 이동" : "기본 그룹으로 이동", "category.move", { id: tg.project ?? tg.id, category: next }],
+        ...moves,
         ["Rename", "space.rename", { id: tg.id }],
         ...(git ? [["New worktree", "worktree", { space: tg.id, action: "new" }], ["Open worktree", "worktree", { space: tg.id, action: "open" }]] : []),
         ...(git === "linked" ? [["Remove worktree", "worktree", { space: tg.id, action: "remove" }]] : []),
@@ -167,7 +228,7 @@ export default class Menu extends View {
     if (it[1] === "category.new") { this.create(it[2].category, cx); return; }
     if (it[1] === "category.move") {
       if (spaces().some(space => space.id === it[2].id)) {
-        setShared("personal-company.categories", { ...(shared("personal-company.categories") ?? {}), [it[2].id]: it[2].category });
+        setShared("groups.assignments", { ...assignments(), [it[2].id]: it[2].category });
       }
       closeOverlay(props()?.overlay);
       return;

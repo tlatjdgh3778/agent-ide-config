@@ -30,9 +30,17 @@ const RAIL_CELL = 32;
 const SIDE_MIN = 48;
 const railCell = (el) => h_flex().flex_none().justify_center().child(el);
 const where = (s, ps) => JSON.stringify([s.machine ?? null, place(s, ps)]);
-const base = (path) => path.replace(/\/+$/, "").split("/").pop();
+const base = (path) => path.replace(/\\/g, "/").replace(/\/+$/, "").split("/").pop();
 // Changes made outside Herdr (an editor's save, a commit in another app): looked
 // for this often, in repos the list shows, while the window is in front.
+const portablePath = path => {
+  const normalized = path.replace(/\\/g, "/").replace(/\/+$/, "");
+  return /^[A-Za-z]:\/|^\/\//.test(path.replace(/\\/g, "/")) ? normalized.toLowerCase() : normalized;
+};
+const inFolder = (path, folder) => {
+  const full = portablePath(path), root = portablePath(folder);
+  return full === root || full.startsWith(root + "/");
+};
 const FALLBACK = 60000;
 // Places looked at together (two git runs each). All at once, a few hundred spaces
 // run out of the app's open files (256 when started from the Dock on macOS) or
@@ -50,6 +58,87 @@ async function both(a, b) {
 // What a stored color name looks like on an avatar (the same in every mod
 // that draws space avatars): one strong color per hue, light and dark alike.
 const MARK = { ansi6: "#22a99a", ansi3: "#e3814f", ansi4: "#5b8def", ansi5: "#8b7cf6", ansi2: "#3fae6a", ansi1: "#d9649a" };
+
+// An arbitrary number of named groups, each belonging to one machine (null is
+// this computer). Membership is explicit — a space is in the group someone put
+// it in, nothing is inferred from its path — and a space in no group is shown
+// plainly under its machine, with no header of its own; DEFAULT_GROUP_ID is
+// how that absence is written down, not a group anyone can see or name.
+// `groups.list`/`groups.assignments` are the source of truth; migrate() seeds
+// them from this bundle's older, binary company/personal keys, and absorbs the
+// folder rules that earlier versions matched on into plain memberships.
+const DEFAULT_GROUP_ID = "__default__";
+const UNGROUPED_LABEL = "그룹에서 빼기";
+
+function installFolders() {
+  return find(layout(), "spaces")?.content?.props?.companyFolders ?? [];
+}
+
+// Per key, so a half-written migration (a render that threw after the first
+// write, say) heals itself on the next call instead of staying incomplete.
+function migrate() {
+  const haveList = shared("groups.list") !== undefined;
+  const haveAssign = shared("groups.assignments") !== undefined;
+  if (haveList && haveAssign) return;
+  const oldLabels = shared("personal-company.labels");
+  const l = oldLabels && typeof oldLabels === "object" ? oldLabels : {};
+  if (!haveList) {
+    const storedFolders = shared("personal-company.folders");
+    const oldFolders = Array.isArray(storedFolders) ? storedFolders : installFolders();
+    setShared("groups.list", oldFolders.length || l.company
+      ? [{ id: "company", machine: null, name: l.company || "지정 그룹", folders: oldFolders }] : []);
+  }
+  if (!haveAssign) {
+    const oldAssign = shared("personal-company.categories");
+    const next = {};
+    if (oldAssign && typeof oldAssign === "object") {
+      for (const [id, cat] of Object.entries(oldAssign)) next[id] = cat === "company" ? "company" : DEFAULT_GROUP_ID;
+    }
+    setShared("groups.assignments", next);
+  }
+}
+
+function groupList() {
+  migrate();
+  const list = shared("groups.list");
+  return Array.isArray(list) ? list : [];
+}
+
+// One machine's groups, then the bucket holding everything in none of them.
+function groupsOn(machine) {
+  const m = machine ?? null;
+  return [
+    ...groupList().filter((g) => (g.machine ?? null) === m),
+    { id: DEFAULT_GROUP_ID, machine: m, name: UNGROUPED_LABEL },
+  ];
+}
+
+function assignments() {
+  const a = shared("groups.assignments");
+  return a && typeof a === "object" ? a : {};
+}
+
+// Groups used to carry folder paths and claim every space beneath one. That
+// rule is gone; the spaces those folders would match become plain members
+// once, here, so nothing jumps out of its group on the upgrade.
+function absorbFolders() {
+  const list = groupList();
+  if (!list.some((g) => g.folders?.length)) return;
+  const assign = { ...assignments() };
+  for (const s of spaces()) {
+    if (assign[s.id]) continue;
+    const machine = s.machine ?? null;
+    for (const g of list) {
+      if ((g.machine ?? null) !== machine) continue;
+      if (s.folder && (g.folders ?? []).some((folder) => inFolder(s.folder, folder))) {
+        assign[s.id] = g.id;
+        break;
+      }
+    }
+  }
+  setShared("groups.assignments", assign);
+  setShared("groups.list", list.map(({ folders, ...rest }) => rest));
+}
 
 // A space speaks up only when something in it needs you.
 export function glyph(status) {
@@ -76,6 +165,7 @@ export default class Spaces extends View {
     this.born = {};
     this.pressed = null;
     this.over = null;
+    this.overGroup = null; // the group a dragged space would join on release
     this.scroll = ScrollHandle.new(); // the list's position: the active space is brought into view through it
     this.activeAt = -1; // the active space's place among the list's children (headers and rows), -1 when not drawn
     this.machines = [];
@@ -96,6 +186,7 @@ export default class Spaces extends View {
 
   checkNew(cx) {
     const now = Date.now();
+    absorbFolders();
     const sp = spaces();
     this.classifyNewSpace(sp, now);
     for (const s of sp) if (!this.shown.has(s.id)) this.born[s.id] ??= now;
@@ -118,7 +209,7 @@ export default class Spaces extends View {
       this.unsure.delete(k);
     }
     const repos = new Set(Object.values(this.git).filter(Boolean).map((g) => g.repo));
-    for (const [repo, pending] of this.watching) if (!repos.has(JSON.stringify([null, repo]))) {
+    for (const [repo, pending] of this.watching) if (!repos.has(JSON.stringify([null, portablePath(repo)]))) {
       this.watching.delete(repo);
       pending.cancel();
     }
@@ -255,7 +346,7 @@ export default class Spaces extends View {
       );
       const name = repo.endsWith("/.git") ? base(repo.slice(0, -5)) : base(repo).replace(/\.git$/, "");
       const [ahead, behind] = counts.code === 0 ? counts.stdout.trim().split(/\s+/).map(Number) : [0, 0];
-      const info = { name, branch: branch.code === 0 ? branch.stdout.trim().replace(/^refs\/heads\//, "") : "(detached)", ahead, behind, repo: JSON.stringify([on, repo]), linked: repo !== `${top}/.git` };
+      const info = { name, branch: branch.code === 0 ? branch.stdout.trim().replace(/^refs\/heads\//, "") : "(detached)", ahead, behind, repo: JSON.stringify([on, portablePath(repo)]), linked: portablePath(repo) !== portablePath(`${top}/.git`) };
       this.git[key] = info;
       if (!on) this.watch(repo, cx);
     } catch {
@@ -275,7 +366,7 @@ export default class Spaces extends View {
         for (;;) {
           await current;
           if (this.watching.get(repo) !== current) return;
-          const mine = JSON.stringify([null, repo]);
+          const mine = JSON.stringify([null, portablePath(repo)]);
           const keys = Object.keys(this.git).filter((k) => this.git[k]?.repo === mine);
           if (!keys.length) break;
           this.refreshGit(keys, cx);
@@ -291,7 +382,7 @@ export default class Spaces extends View {
     const project = row.parent ? this.ordered().find(item => item.w.id === row.parent) : row;
     openOverlay({
       mod: "personal-company-menu", kind: "popup", width: 245, height: 300,
-      props: { tab: "space", target: { id: row.w.id, project: project?.w.id ?? row.w.id, category: this.category(project ?? row) } },
+      props: { tab: "space", target: { id: row.w.id, project: project?.w.id ?? row.w.id, category: this.category(project ?? row), machine: row.w.machine ?? null } },
     });
   }
 
@@ -308,10 +399,10 @@ export default class Spaces extends View {
     const known = new Set(pending.known);
     const matches = current.filter(space =>
       !known.has(space.id) && space.machine === pending.machine
-      && (!pending.folder || space.folder.replace(/\/+$/, "") === pending.folder.replace(/\/+$/, "")));
+      && (!pending.folder || portablePath(space.folder) === portablePath(pending.folder)));
     if (now < pending.deadline && matches.length === 1) {
       const id = matches[0].id;
-      setShared("personal-company.categories", { ...(shared("personal-company.categories") ?? {}), [id]: pending.category });
+      setShared("groups.assignments", { ...assignments(), [id]: pending.category });
       setShared("personal-company.pending", null);
     } else if (now >= pending.deadline || matches.length > 1) {
       setShared("personal-company.pending", null);
@@ -349,15 +440,14 @@ export default class Spaces extends View {
     });
   }
 
+  // Whichever group of its own machine it was put in, else that machine's
+  // default bucket. A group deleted since then leaves its spaces in default.
   category(row) {
-    const override = shared("personal-company.categories")?.[row.w.id];
-    if (override === "company" || override === "personal") return override;
-    const folders = props()?.companyFolders ?? [];
-    const repository = row.g && JSON.parse(row.g.repo)[1];
-    const company = [row.w.folder, repository].some(path => path && folders.some(
-      folder => path === folder || path.startsWith(folder + "/"),
-    ));
-    return company ? "company" : "personal";
+    const machine = row.w.machine ?? null;
+    const group = assignments()[row.w.id];
+    if (!group) return DEFAULT_GROUP_ID;
+    if (group === DEFAULT_GROUP_ID) return group;
+    return groupList().some((g) => g.id === group && (g.machine ?? null) === machine) ? group : DEFAULT_GROUP_ID;
   }
 
   toggleProject(key, cx) {
@@ -366,35 +456,69 @@ export default class Spaces extends View {
     cx.notify();
   }
 
+  // Finish a drag onto a group: the space joins it, worktrees follow their
+  // project. Dropping where it already was changes nothing.
+  drop(group, machine, cx) {
+    const id = this.pressed;
+    this.pressed = null;
+    this.over = null;
+    this.overGroup = null;
+    const space = id !== null && spaces().find(s => s.id === id);
+    if (!space || (space.machine ?? null) !== (machine ?? null)) { cx.notify(); return; }
+    const row = this.ordered().find(r => r.w.id === id);
+    const target = row?.parent ?? id;
+    if (assignments()[target] !== group) {
+      setShared("groups.assignments", { ...assignments(), [target]: group });
+    }
+    cx.notify();
+  }
+
   sections(rows, t, machine) {
     const projects = rows.filter(row => !row.parent);
     const items = [];
     let active = -1;
-    for (const [key, label] of [["company", "지정 그룹"], ["personal", "기본 그룹"]]) {
+    const groups = groupsOn(machine);
+    const dragging = this.pressed !== null
+      && (spaces().find(s => s.id === this.pressed)?.machine ?? null) === (machine ?? null);
+    for (const { id: key, name: label } of groups) {
       const members = projects.filter(row => this.category(row) === key);
+      // Spaces in no group just stand under the machine. Only a drag, which
+      // needs somewhere to drop them, brings that bucket a header.
+      const bare = key === DEFAULT_GROUP_ID && !dragging;
       const foldKey = `section-${JSON.stringify([machine, key])}`;
-      const folded = this.projectFolds.has(foldKey);
-      const holdsActive = members.some(row => row.w.active || row.children.some(child => child.w.active));
-      if (folded && holdsActive) active = items.length;
-      items.push(h_flex().id(foldKey).h(29).flex_none().px(7).gap(7).items_center().rounded(6)
-        .text_size(12).font_bold().text_color(folded && holdsActive ? t.foreground : t.muted)
-        .cursor_pointer().hover(style => style.bg(t.hover))
-        .tooltip(`${label} ${folded ? "펼치기" : "접기"}`)
-        .on_click((_event, cx) => this.toggleProject(foldKey, cx))
-        .child(svg(`mods/workspace-chrome/chevron-${folded ? "right" : "down"}.svg`).size(11).flex_none())
-        .child(div().flex_1().child(label))
-        .child(div().flex_none().text_color(t.dim).child(String(members.length))));
+      const folded = !bare && this.projectFolds.has(foldKey);
+      if (!bare) {
+        const ungrouped = key === DEFAULT_GROUP_ID;
+        const holdsActive = members.some(row => row.w.active || row.children.some(child => child.w.active));
+        const dropping = dragging && this.overGroup === key;
+        if (folded && holdsActive) active = items.length;
+        items.push(h_flex().id(foldKey).h(29).flex_none().px(7).gap(7).items_center().rounded(6)
+          .text_size(12).font_bold().text_color(folded && holdsActive ? t.foreground : t.muted)
+          .cursor_pointer().hover(style => style.bg(t.hover))
+          .when(dropping, el => el.bg(t.selected).text_color(t.foreground))
+          .when(ungrouped, el => el.border_1().border_color(dropping ? t.accent : t.border))
+          .tooltip(ungrouped ? label : (dragging ? `${label}으로 옮기기` : `${label} ${folded ? "펼치기" : "접기"}`))
+          .on_mouse_move((_e, cx) => {
+            if (this.pressed !== null && this.overGroup !== key) { this.overGroup = key; this.over = null; cx.notify(); }
+          })
+          .on_mouse_up("left", (_e, cx) => this.drop(key, machine, cx))
+          .on_click((_event, cx) => { if (this.pressed === null && !ungrouped) this.toggleProject(foldKey, cx); })
+          .when(!ungrouped, el => el
+            .child(svg(`mods/workspace-chrome/chevron-${folded ? "right" : "down"}.svg`).size(11).flex_none()))
+          .child(div().flex_1().child(label))
+          .when(!ungrouped, el => el.child(div().flex_none().text_color(t.dim).child(String(members.length)))));
+      }
       if (folded) continue;
       for (const row of members) {
         const projectFold = `project-${row.w.id}`;
         const projectClosed = this.projectFolds.has(projectFold);
         const childActive = projectClosed && row.children.some(child => child.w.active);
         if (row.w.active || childActive) active = items.length;
-        items.push(this.row(row, t, { projectFold, projectClosed, childActive }));
+        items.push(this.row(row, t, { projectFold, projectClosed, childActive, group: key }));
         if (projectClosed) continue;
         for (const child of row.children) {
           if (child.w.active) active = items.length;
-          items.push(this.row(child, t));
+          items.push(this.row(child, t, { group: key }));
         }
       }
     }
@@ -513,7 +637,7 @@ export default class Spaces extends View {
       .when(g.behind > 0, (el) => el.child(div().flex_none().text_color(t.ansi1).child(`\u2193${g.behind}`)));
   }
 
-  row(row, t, { projectFold, projectClosed, childActive } = {}) {
+  row(row, t, { projectFold, projectClosed, childActive, group } = {}) {
     const { w, i, g, tree, children } = row;
     const on = w.active;
     const fromIndex = this.pressed === null ? -1 : spaces().findIndex(s => s.id === this.pressed);
@@ -546,17 +670,30 @@ export default class Spaces extends View {
       .on_mouse_move((_e, cx) => {
         const source = spaces().find(s => s.id === this.pressed);
         const over = source && (source.machine ?? null) === (w.machine ?? null) ? w.id : null;
-        if (this.pressed !== null && this.over !== over) {
+        const onGroup = over ? group ?? null : null;
+        if (this.pressed !== null && (this.over !== over || this.overGroup !== onGroup)) {
           this.over = over;
+          this.overGroup = onGroup;
           cx.notify();
         }
       })
+      // Dropped on a row of another group, a space joins that group as well
+      // as taking its place in the order.
       .on_mouse_up("left", (_e, cx) => {
         const from = this.pressed;
         const over = this.over;
+        const onGroup = this.overGroup;
         this.pressed = null;
         this.over = null;
+        this.overGroup = null;
         if (from !== null && over === w.id && from !== w.id) {
+          if (onGroup) {
+            const source = this.ordered().find(r => r.w.id === from);
+            const target = source?.parent ?? from;
+            if (assignments()[target] !== onGroup) {
+              setShared("groups.assignments", { ...assignments(), [target]: onGroup });
+            }
+          }
           const index = spaces().findIndex(s => s.id === w.id);
           if (index !== -1) run("space.move", { id: from, index: index + 1 });
         } else if (from === w.id) run("space.select", { id: w.id });
@@ -638,6 +775,10 @@ export default class Spaces extends View {
       .child(h_flex().h(31).pl(16).pr(10).items_center().justify_between().text_size(11.5).text_color(t.dim)
         .when(collapsed, el => el.pl(0).pr(0).justify_center())
         .when(!collapsed, el => el.child("Spaces"))
+        .when(!collapsed, el => el.child(div().id("manage-folders").size(26).flex_none().flex().items_center().justify_center().rounded(6).hover(s => s.bg(t.hover).text_color(t.foreground))
+          .tooltip("그룹 설정")
+          .on_click(() => openOverlay({ mod: "personal-company-folders", kind: "dialog", width: 400, height: 440 }))
+          .child(svg("mods/workspace-chrome/folder-plus.svg").size(14))))
         .child(div().id("space-new").size(26).flex_none().flex().items_center().justify_center().rounded(6).hover(s => s.bg(t.hover).text_color(t.foreground))
           .tooltip("새 Space")
           .on_click(() => this.newSpace(sp.find(space => space.active)?.machine ?? null))
@@ -645,7 +786,7 @@ export default class Spaces extends View {
       .child(v_flex().flex_1().min_h(0).px(collapsed ? 0 : 8).pb(14).overflow_y_scrollbar().mode("always").track_scroll(this.scroll)
         // A block above (another mod's) growing, or the window resizing, shrinks this list and can push the active space out.
         .on_size_change((_size, cx) => { if (this.activeAt >= 0) { this.scroll.scroll_to_item(this.activeAt); cx.notify(); } })
-        .on_mouse_up("left", (_e, cx) => { this.pressed = null; cx.notify(); })
+        .on_mouse_up("left", (_e, cx) => { this.pressed = null; this.overGroup = null; cx.notify(); })
         .children(list));
   }
 }
