@@ -14,10 +14,10 @@ trap 'exit 143' TERM
 : > "$scratch/company-paths.jsonl"
 while [ "$#" -gt 0 ]; do
     case "$1" in
-        --company-folder)
-            [ "$#" -ge 2 ] || { printf '%s\n' 'Missing path after --company-folder.' >&2; exit 1; }
+        --group-folder|--company-folder)
+            [ "$#" -ge 2 ] || { printf '%s\n' 'Missing path after --group-folder.' >&2; exit 1; }
             case "$2" in /*) jq -n --arg path "$2" '$path | if . == "/" then . else sub("/+$"; "") end' >> "$scratch/company-paths.jsonl" ;;
-                *) printf '%s\n' 'Company folders must use absolute Mac paths.' >&2; exit 1 ;; esac
+                *) printf '%s\n' 'Group folders must use absolute Mac paths.' >&2; exit 1 ;; esac
             shift 2 ;;
         --config-root)
             [ "$#" -ge 2 ] || { printf '%s\n' 'Missing path after --config-root.' >&2; exit 1; }

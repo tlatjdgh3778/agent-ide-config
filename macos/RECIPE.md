@@ -1,12 +1,12 @@
-# 개인 / 회사 · macOS
+# Herdr Workspace · macOS
 
-Herdr App의 레이아웃과 네이티브 JavaScript Mod 모음입니다. 왼쪽 Spaces에는 개인과 회사, 프로젝트, 워크트리가 보입니다. 아래 Agents는 Space 안에서 상태를 나누고 읽음 표시를 관리합니다. 상단 Space 맵은 현재 프로젝트나 전체 프로젝트를 카드와 연결선으로 그리고, 오른쪽 Files와 Changes는 파일 검색 및 Git 변경을 담당합니다. 하단 Usage Limits에는 로그인된 Claude Code와 Codex CLI의 사용량과 다음 초기화까지의 시간이 표시됩니다.
+Herdr App의 레이아웃과 네이티브 JavaScript Mod 모음입니다. 왼쪽 Spaces에는 지정 그룹과 기본 그룹, 프로젝트, 워크트리가 보입니다. 아래 Agents는 Space 안에서 상태를 나누고 읽음 표시를 관리합니다. 상단 Space 맵은 현재 프로젝트나 전체 프로젝트를 카드와 연결선으로 그리고, 오른쪽 Files와 Changes는 파일 검색 및 Git 변경을 담당합니다. 하단 Usage Limits에는 로그인된 Claude Code와 Codex CLI의 사용량과 다음 초기화까지의 시간이 표시됩니다.
 
 ## 설치
 
 1. Mac에서 Herdr App을 한 번 연 뒤, 그 앱이 쓰는 설정 폴더의 `AGENTS.md`와 이 폴더의 파일을 읽습니다. 레이아웃은 Herdr App 0.1.16을 기준으로 합니다.
-2. `./install.sh --company-folder "/absolute/path/to/work"`를 실행할 때 실제 회사 경로를 넣습니다. 폴더가 여러 개면 옵션을 반복합니다. 경로를 생략하면 같은 레이아웃의 기존 분류 경로를 유지하며, 새 설치에서는 Space 우클릭으로 수동 분류할 수 있습니다. 설치 스크립트는 `jq`를 사용합니다.
-3. 직접 복사할 때는 `layouts/personal-company.json`과 `mods/`의 각 모드를 같은 위치에 둡니다. 기존과 이름이 같고 내용이 다른 Mod는 보존합니다. 회사 경로 배열은 레이아웃의 `sidebar → sidebar-lists → spaces → content.props.companyFolders`에 넣습니다. `keys.json`의 두 섹션은 기존 키 파일에 병합합니다.
+2. `./install.sh --group-folder "/absolute/path/to/work"`를 실행할 때 실제 그룹 경로를 넣습니다. 폴더가 여러 개면 옵션을 반복합니다. 경로를 생략하면 같은 레이아웃의 기존 분류 경로를 유지하며, 새 설치에서는 Space 우클릭으로 수동 분류할 수 있습니다. 설치 스크립트는 `jq`를 사용합니다.
+3. 직접 복사할 때는 `layouts/personal-company.json`과 `mods/`의 각 모드를 같은 위치에 둡니다. 기존과 이름이 같고 내용이 다른 Mod는 보존합니다. 그룹 경로 배열은 레이아웃의 `sidebar → sidebar-lists → spaces → content.props.companyFolders`에 넣습니다. `keys.json`의 두 섹션은 기존 키 파일에 병합합니다.
 4. 설치한 Mod를 `herdr-app check <폴더>`로 보고, `herdr-app do layout.switch --name personal-company`로 엽니다.
 
 ## 조작

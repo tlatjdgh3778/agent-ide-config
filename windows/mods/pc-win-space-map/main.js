@@ -9,7 +9,7 @@ const STATUS = [
   ["done", "완료"],
   ["idle", "유휴"],
 ];
-const CATEGORIES = [["company", "회사"], ["personal", "개인"]];
+const CATEGORIES = [["company", "지정 그룹"], ["personal", "기본 그룹"]];
 
 const shortTitle = (agent) => {
   const title = (agent.title ?? "").replace(/^\[ [!.] \] /, "")

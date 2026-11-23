@@ -29,7 +29,7 @@ function items(p, git) {
   const tg = p.target ?? {};
   switch (p.tab ?? "new-space") {
     case "new-space":
-      return [["회사", "category.new", { category: "company" }], ["개인", "category.new", { category: "personal" }]];
+      return [["지정 그룹", "category.new", { category: "company" }], ["기본 그룹", "category.new", { category: "personal" }]];
     case "pane": {
       // A kept sub-agent can go back under its parent, still running.
       const all = terminals();
@@ -71,7 +71,7 @@ function items(p, git) {
     case "space": {
       const next = tg.category === "company" ? "personal" : "company";
       return [
-        [next === "company" ? "회사로 분류" : "개인으로 분류", "category.move", { id: tg.project ?? tg.id, category: next }],
+        [next === "company" ? "지정 그룹으로 이동" : "기본 그룹으로 이동", "category.move", { id: tg.project ?? tg.id, category: next }],
         ["Rename", "space.rename", { id: tg.id }],
         ...(git ? [["New worktree", "worktree", { space: tg.id, action: "new" }], ["Open worktree", "worktree", { space: tg.id, action: "open" }]] : []),
         ...(git === "linked" ? [["Remove worktree", "worktree", { space: tg.id, action: "remove" }]] : []),

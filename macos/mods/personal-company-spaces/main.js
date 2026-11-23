@@ -370,7 +370,7 @@ export default class Spaces extends View {
     const projects = rows.filter(row => !row.parent);
     const items = [];
     let active = -1;
-    for (const [key, label] of [["company", "회사"], ["personal", "개인"]]) {
+    for (const [key, label] of [["company", "지정 그룹"], ["personal", "기본 그룹"]]) {
       const members = projects.filter(row => this.category(row) === key);
       const foldKey = `section-${JSON.stringify([machine, key])}`;
       const folded = this.projectFolds.has(foldKey);

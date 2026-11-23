@@ -1,7 +1,8 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)]
-    [string[]]$CompanyFolder,
+    [Alias('CompanyFolder')]
+    [string[]]$GroupFolder,
 
     [string]$ConfigRoot
 )
@@ -14,14 +15,14 @@ if (-not $ConfigRoot) {
     else { $ConfigRoot = Join-Path (Join-Path ([Environment]::GetFolderPath('UserProfile')) '.config') 'herdr-app' }
 }
 $ConfigRoot = [IO.Path]::GetFullPath($ConfigRoot)
-$roots = @($CompanyFolder | ForEach-Object {
+$roots = @($GroupFolder | ForEach-Object {
     $folder = $_.Trim().Replace('\', '/')
     if ($folder -notmatch '^[A-Za-z]:/|^//[^/]+/[^/]+') {
-        throw "Enter absolute Windows drive or UNC paths for -CompanyFolder. Invalid path: $_"
+        throw "Enter absolute Windows drive or UNC paths for -GroupFolder. Invalid path: $_"
     }
     $folder
 } | Select-Object -Unique)
-if ($roots.Count -eq 0) { throw 'Supply at least one company folder.' }
+if ($roots.Count -eq 0) { throw 'Supply at least one group folder.' }
 
 $bundleRoot = $PSScriptRoot
 $layoutName = 'personal-company-windows'
