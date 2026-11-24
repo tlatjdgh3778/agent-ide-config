@@ -83,7 +83,9 @@ async function checkout(folder, on) {
   return common.stdout.trim() === `${top.stdout.trim()}/.git` ? "main" : "linked";
 }
 
-function items(p, git) {
+const isWorktree = (target, git) => git === "linked" || (git == null && target?.worktree === true);
+
+function items(p, git, repoFolder) {
   p = p ?? {};
   const tg = p.target ?? {};
   switch (p.tab ?? "new-space") {
@@ -134,9 +136,12 @@ function items(p, git) {
       return [
         ...moves,
         ["Rename", "space.rename", { id: tg.id }],
-        ...(git ? [["New worktree", "worktree", { space: tg.id, action: "new" }], ["Open worktree", "worktree", { space: tg.id, action: "open" }]] : []),
-        ...(git === "linked" ? [["Remove worktree", "worktree", { space: tg.id, action: "remove" }]] : []),
-        ["Close", "space.close", { id: tg.id }],
+        ...(repoFolder ? [
+          ["New worktree", "worktree", { space: tg.id, folder: repoFolder, machine: tg.machine, action: "new" }],
+          ["Open worktree", "worktree", { space: tg.id, folder: repoFolder, machine: tg.machine, action: "open" }],
+        ] : []),
+        ...(git === "linked" ? [["Git 워크트리 제거…", "worktree", { space: tg.id, action: "remove" }]] : []),
+        [isWorktree(tg, git) ? "워크트리 세션 닫기…" : "Space 세션 닫기…", "space.close", { id: tg.id }],
       ];
     }
     default:
@@ -205,16 +210,23 @@ export default class Menu extends View {
     this.handle.focus();
     const p = props();
     const space = p?.tab === "space" && spaces().find((s) => s.id === p.target?.id);
-    const folder = space && place(space);
-    if (folder)
+    const checkoutFolder = space && (p.target.checkoutFolder || space.folder);
+    this.repoFolder = p?.target?.checkoutVerified ? checkoutFolder : null;
+    const liveFolder = space && place(space);
+    if (checkoutFolder || liveFolder) {
       cx.spawn(async (cx) => {
-        this.git = await checkout(folder, space.machine).catch(() => null);
+        const probe = folder => folder ? checkout(folder, space.machine).catch(() => null) : null;
+        const live = probe(liveFolder);
+        const [git, repo] = await Promise.all([live, checkoutFolder === liveFolder ? live : probe(checkoutFolder)]);
+        this.git = git;
+        if (repo) this.repoFolder = checkoutFolder;
         cx.notify();
       });
+    }
   }
 
   choose(i, cx) {
-    const it = items(props(), this.git)[i];
+    const it = items(props(), this.git, this.repoFolder)[i];
     if (!it || it[3]) return;
     if (it[1] === "tab.toggle-lock") {
       const id = it[2].id;
@@ -233,14 +245,34 @@ export default class Menu extends View {
       closeOverlay(props()?.overlay);
       return;
     }
+    if (it[1] === "space.close") {
+      const p = props();
+      const space = spaces().find(item => item.id === it[2].id);
+      closeOverlay(p?.overlay);
+      if (!space) return;
+      const worktree = isWorktree(p?.target, this.git);
+      openOverlay({
+        mod: "confirm", kind: "dialog", modal: true, width: 455, height: 185,
+        props: {
+          title: worktree ? "워크트리 세션을 닫을까요?" : "Space 세션을 닫을까요?",
+          detail: `${space.name}의 탭과 실행 중인 터미널이 종료됩니다. ${worktree
+            ? "Git 워크트리 폴더와 브랜치는 그대로 유지됩니다."
+            : "프로젝트 폴더와 파일은 그대로 유지됩니다."}`,
+          command: { name: "space.close", args: { id: space.id, confirmed: true } },
+        },
+      });
+      return;
+    }
     closeOverlay(props()?.overlay);
-    if (it[1] === "worktree") openOverlay({ mod: "worktree", kind: "dialog", ...(it[2].action === "open" ? { width: 560, height: 480 } : { width: 440, height: 260 }), props: it[2] });
-    else run(it[1], it[2]);
+    if (it[1] === "worktree") {
+      if (!spaces().some(space => space.id === it[2].space)) return;
+      openOverlay({ mod: "worktree", kind: "dialog", ...(it[2].action === "open" ? { width: 560, height: 480 } : { width: 440, height: 260 }), props: it[2] });
+    } else run(it[1], it[2]);
   }
 
   render(cx) {
     const t = theme();
-    const list = items(props(), this.git);
+    const list = items(props(), this.git, this.repoFolder);
     const creating = (props()?.tab ?? "new-space") === "new-space";
     return v_flex()
       .id("menu")

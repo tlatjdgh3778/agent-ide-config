@@ -29,7 +29,9 @@ const RAIL_CELL = 32;
 // stays readable instead of turning into an ellipsis next to a long branch.
 const SIDE_MIN = 48;
 const railCell = (el) => h_flex().flex_none().justify_center().child(el);
-const where = (s, ps) => JSON.stringify([s.machine ?? null, place(s, ps)]);
+const gitKey = (s, folder) => JSON.stringify([s.machine ?? null, folder]);
+const where = (s, ps) => gitKey(s, place(s, ps));
+const spaceFolder = (s) => gitKey(s, s.folder);
 const base = (path) => path.replace(/\\/g, "/").replace(/\/+$/, "").split("/").pop();
 // Changes made outside Herdr (an editor's save, a commit in another app): looked
 // for this often, in repos the list shows, while the window is in front.
@@ -203,7 +205,7 @@ export default class Spaces extends View {
     // Moved there: what it knew of that place may be old.
     const at = {};
     for (const s of sp) at[s.id] = where(s, ps);
-    const keys = new Set(Object.values(at).filter((k) => JSON.parse(k)[1]));
+    const keys = new Set([...Object.values(at), ...sp.map(spaceFolder)].filter(k => JSON.parse(k)[1]));
     // Repos a space just left. Closing a worktree's space often means the
     // worktree went with it, so ask again rather than letting it linger as a
     // ghost row until the fallback comes round.
@@ -348,13 +350,15 @@ export default class Spaces extends View {
       }
       // The repo's own .git folder names it; a worktree's top differs from it.
       const top = r.stdout.replace(/\n$/, ""), repo = common.stdout.replace(/\n$/, "");
-      const [branch, counts] = await both(
-        exec("git", ["symbolic-ref", "-q", "HEAD"], { cwd, on }),
-        exec("git", ["rev-list", "--left-right", "--count", "HEAD...@{upstream}"], { cwd, on }),
-      );
+      // Branch and upstream are display metadata. A detached or untracked checkout
+      // still supplies a Git identity for worktree grouping.
+      const [branch, counts] = await Promise.all([
+        exec("git", ["symbolic-ref", "-q", "HEAD"], { cwd, on }).catch(() => null),
+        exec("git", ["rev-list", "--left-right", "--count", "HEAD...@{upstream}"], { cwd, on }).catch(() => null),
+      ]);
       const name = repo.endsWith("/.git") ? base(repo.slice(0, -5)) : base(repo).replace(/\.git$/, "");
-      const [ahead, behind] = counts.code === 0 ? counts.stdout.trim().split(/\s+/).map(Number) : [0, 0];
-      const info = { name, branch: branch.code === 0 ? branch.stdout.trim().replace(/^refs\/heads\//, "") : "(detached)", ahead, behind, repo: JSON.stringify([on, portablePath(repo)]), linked: portablePath(repo) !== portablePath(`${top}/.git`) };
+      const [ahead, behind] = counts?.code === 0 ? counts.stdout.trim().split(/\s+/).map(Number) : [0, 0];
+      const info = { name, top: portablePath(top), branch: branch?.code === 0 ? branch.stdout.trim().replace(/^refs\/heads\//, "") : "(detached)", ahead, behind, repo: JSON.stringify([on, portablePath(repo)]), linked: portablePath(repo) !== portablePath(`${top}/.git`) };
       this.git[key] = info;
       // Only the main checkout is asked, so one repo is listed once however
       // many of its checkouts are open.
@@ -409,9 +413,22 @@ export default class Spaces extends View {
 
   menu(row) {
     const project = row.parent ? this.ordered().find(item => item.w.id === row.parent) : row;
+    const origin = spaceFolder(row.w);
+    const declared = this.git[origin];
+    // An unchecked Space folder must not inherit another repository from a shell.
+    const canFollowTerminal = !row.w.folder || (declared === null && !this.unsure.has(origin));
+    const checkout = canFollowTerminal ? row.g : declared;
     openOverlay({
       mod: "pc-win-menu", kind: "popup", width: 245, height: 300,
-      props: { tab: "space", target: { id: row.w.id, project: project?.w.id ?? row.w.id, category: this.category(project ?? row), machine: row.w.machine ?? null } },
+      props: { tab: "space", target: {
+        id: row.w.id,
+        project: project?.w.id ?? row.w.id,
+        category: this.category(project ?? row),
+        machine: row.w.machine ?? null,
+        checkoutFolder: checkout?.top ?? row.w.folder,
+        checkoutVerified: Boolean(checkout),
+        worktree: Boolean(row.g?.linked || row.parent),
+      } },
     });
   }
 
@@ -443,21 +460,34 @@ export default class Spaces extends View {
     }
   }
 
+  // A Space opened on a checkout keeps that identity when a shell changes folder.
+  gitForSpace(space, ps) {
+    return this.git[spaceFolder(space)] ?? this.git[where(space, ps)] ?? null;
+  }
+
   // Reuse Git's common directory to group checkout spaces in this view only.
   ordered() {
     const sp = spaces(), ps = panes();
-    const ready = (w) => this.shown.has(w.id) || where(w, ps) in this.git || Date.now() - (this.born[w.id] ??= Date.now()) > 1500;
+    const ready = (w) => this.shown.has(w.id) || this.gitForSpace(w, ps)
+      || (spaceFolder(w) in this.git && where(w, ps) in this.git)
+      || Date.now() - (this.born[w.id] ??= Date.now()) > 1500;
     for (const w of sp) if (!this.shown.has(w.id) && ready(w)) this.shown.add(w.id);
-    const rows = sp.map((w, i) => ({ w, i, g: this.git[where(w, ps)] ?? null }))
+    const rows = sp.map((w, i) => ({ w, i, g: this.gitForSpace(w, ps) }))
       .filter(({ w }) => this.shown.has(w.id));
-    const roots = new Map();
+    const roots = new Map(), declaredRoots = new Map();
     for (const row of rows) {
       if (row.g && !row.g.linked && !roots.has(row.g.repo)) roots.set(row.g.repo, row);
+      if (row.w.folder && !row.g?.linked) {
+        const key = gitKey(row.w, portablePath(row.w.folder) + "/.git");
+        if (!declaredRoots.has(key)) declaredRoots.set(key, row);
+      }
     }
     const children = new Map();
     for (const row of rows) {
-      const parent = row.g?.linked && roots.get(row.g.repo);
-      if (!parent) continue;
+      // A verified child gives the exact common directory even while the main
+      // Space's Git probe is in flight or temporarily unavailable.
+      const parent = row.g?.linked && (declaredRoots.get(row.g.repo) ?? roots.get(row.g.repo));
+      if (!parent || parent === row) continue;
       row.parent = parent.w.id;
       if (!children.has(row.parent)) children.set(row.parent, []);
       children.get(row.parent).push(row);
@@ -491,7 +521,7 @@ export default class Spaces extends View {
     const taken = new Set();
     for (const s of spaces()) {
       if ((s.machine ?? null) !== machine) continue;
-      const at = portablePath(place(s, ps) ?? "");
+      const at = this.gitForSpace(s, ps)?.top ?? portablePath(place(s, ps) ?? "");
       if (!at) continue;
       let best = null;
       for (const p of paths) {

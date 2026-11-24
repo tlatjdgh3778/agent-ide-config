@@ -2,6 +2,8 @@
 
 Herdr App의 레이아웃과 네이티브 JavaScript Mod 모음입니다. 왼쪽 Spaces에는 머신별 그룹과 프로젝트, 워크트리가 보입니다. 아래 Agents는 Space 안에서 상태를 나누고 읽음 표시를 관리합니다. 상단 Space 맵은 현재 프로젝트나 전체 프로젝트를 카드와 연결선으로 그리고, 오른쪽 Files와 Changes는 파일 검색 및 Git 변경을 담당합니다. 하단 Usage Limits에는 로그인된 Claude Code와 Codex CLI의 사용량과 다음 초기화까지의 시간이 표시됩니다.
 
+Agents 기본 화면은 **확인할 작업**입니다. 입력 대기와 안 읽음을 프로젝트별로 보여주고, 방금 연 항목은 **보고 있음**으로 표시합니다. **전체 보기**에서 다른 상태의 세션도 볼 수 있습니다. Space의 **New worktree / Open worktree**는 그 Space의 저장소를 기준으로 동작합니다. **워크트리 세션 닫기**는 Herdr의 탭과 터미널을 닫는 동작이며, **Git 워크트리 제거**는 별도의 Git 동작입니다.
+
 ## 설치
 
 1. Mac에서 Herdr App을 한 번 연 뒤, 그 앱이 쓰는 설정 폴더의 `AGENTS.md`와 이 폴더의 파일을 읽습니다. 레이아웃은 Herdr App 0.1.16을 기준으로 합니다.

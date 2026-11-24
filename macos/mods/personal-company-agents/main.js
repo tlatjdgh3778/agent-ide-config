@@ -64,6 +64,16 @@ const sortOf = () => SORTS.find((s) => s.id === shared("personal-company.agents.
 const SECTION = { 4: "입력 대기", 3: "작업 중", 2: "완료", 1: "유휴" };
 const SECTION_STATUS = { 4: "blocked", 3: "working", 2: "done" };
 const READ_STATE = "personal-company.agents.read-state";
+const FILTERS = [
+  { id: "blocked", label: "입력 대기", short: "입력", tone: "blocked" },
+  { id: "working", label: "작업 중", short: "작업", tone: "working" },
+  { id: "unread", label: "안 읽음", short: "안 읽음", tone: "accent" },
+];
+const PROJECT_BADGES = [
+  ...FILTERS.slice(0, 2),
+  { id: "done", label: "완료", short: "완료", tone: "done" },
+  FILTERS[2],
+];
 
 function duration(ms) {
   const m = Math.floor(ms / 60000);
@@ -87,6 +97,10 @@ export default class Agents extends View {
       this.groupFolds = new Set(Array.isArray(folded) ? folded : ["sec-1"]);
     } catch { this.groupFolds = new Set(["sec-1"]); }
     this.folded = new Set();
+    this.mode = "inbox";
+    this.filter = null;
+    this.filterFolds = new Set();
+    this.review = null;
     // Each agent's last state and when it changed (ms), kept across restarts.
     try { this.changed = JSON.parse(localStorage.getItem("changed") ?? "{}"); } catch { this.changed = {}; }
     if (!this.changed || typeof this.changed !== "object" || Array.isArray(this.changed)) this.changed = {};
@@ -181,9 +195,20 @@ export default class Agents extends View {
     setShared(READ_STATE, states);
   }
 
-  openAgent(agent, action) {
-    if (this.isUnread(agent)) this.markRead(agent, true);
+  openAgent(agent, action, cx) {
+    const unread = this.isUnread(agent);
+    if (this.mode === "inbox" || this.filter === "unread") {
+      // Keep the row on the screen while the focus change and native "done" clear arrive.
+      this.review = { address: agent.address, previous: focused()?.agent, focused: false };
+    }
+    if (unread) this.markRead(agent, true);
     action();
+    cx.notify();
+  }
+
+  reviewBadge(t) {
+    return div().flex_none().px(5).py(2).rounded(4).bg(t.raised)
+      .text_size(10.5).text_color(t.accent).child("보고 있음");
   }
 
   openReadMenu(agent) {
@@ -230,6 +255,7 @@ export default class Agents extends View {
     const on = k.address === shown;
     const agent = this.reported.get(k.address) ?? { address: k.address, status: st };
     const unread = this.isUnread(agent, this.readState);
+    const reviewing = this.review?.address === agent.address && !unread;
     return h_flex()
       .id(`sub-${k.address}`)
       .pl(39)
@@ -243,14 +269,15 @@ export default class Agents extends View {
       .when(on, (el) => el.bg(t.raised))
       .hover((s) => s.bg(t.hover))
       .on_mouse_down("right", (_e, cx) => { cx.stop_propagation(); this.openReadMenu(agent); })
-      .on_click(() => this.openAgent(agent, () =>
-        this.listed.has(k.address) ? run("pane.focus", { terminal: k.address }) : this.peek(k.address)))
+      .on_click((_e, cx) => this.openAgent(agent, () =>
+        this.listed.has(k.address) ? run("pane.focus", { terminal: k.address }) : this.peek(k.address), cx))
       .children(s.lines.map(l => div().self_start().mt(-4).w(9).h(17).mr(4).flex_none()
         .when(Boolean(l), el => el.border_l(1.5).border_color(t.input))
         .when(l === "└" || l === "├", el => el.border_b(1.5).rounded_bl(6))))
       .when(Boolean(pic), el => el.child(div().mr(8).child(pic)))
       .child(div().flex_1().truncate().text_color(on ? t.foreground : t.muted).child(k.name || k.template || k.program?.name || k.address))
       .when(unread, el => el.child(this.unreadDot(t).mx(4)))
+      .when(reviewing, el => el.child(this.reviewBadge(t).mr(4)))
       .child(this.status(t, { status: st }, compact));
   }
 
@@ -271,6 +298,11 @@ export default class Agents extends View {
     if (props()?.readMenu) return this.readMenu(t);
     const collapsed = narrow();
     const sort = sortOf();
+    const width = find(layout(), "sidebar")?.size?.px ?? 268;
+    const compactSummary = width < 285;
+    const inbox = this.mode === "inbox";
+    const filter = collapsed ? null : this.filter;
+    const constrained = inbox || Boolean(filter);
     let list = agents();
     this.readState = shared(READ_STATE) ?? {};
     this.reported = new Map(list.map(agent => [agent.address, agent]));
@@ -278,16 +310,27 @@ export default class Agents extends View {
     const all = terminals();
     this.migratePins(all);
     const shown = focused()?.agent;
+    if (this.review) {
+      const { address, previous, focused: hadFocus } = this.review;
+      if (shown === address) this.review.focused = true;
+      else if (shown && (hadFocus || shown !== previous)) this.review = null;
+    }
     const now = Date.now();
     this.track(list, now);
     // A kept sub-agent (one with a pane) is in agents() too: where a tree shows
     // it, it gets no row of its own, unless it's pinned.
     const nested = new Set(collapsed ? [] : list.flatMap((a) => this.tree(all, a.address).map((s) => s.t.address)));
     list = list.filter((a) => a.pinned || !nested.has(a.address));
+    const subtrees = new Map(list.map(agent => [agent.address, this.tree(all, agent.address)]));
+    const kidsOf = agent => subtrees.get(agent.address) ?? [];
+    const reviewAddress = inbox || filter === "unread" ? this.review?.address : null;
+    const reviewRow = reviewAddress && (list.find(a => a.address === reviewAddress)
+      ?? list.find(a => kidsOf(a).some(({ t }) => t.address === reviewAddress)))?.address;
+    if (reviewAddress && !reviewRow) this.review = null;
     const tabCounts = new Map();
     for (const a of list) tabCounts.set(a.tab, (tabCounts.get(a.tab) ?? 0) + 1);
-    const byPriority = sort.id === "priority";
-    const urgency = new Map(list.map((a) => [a.address, Math.max(this.rank(a), ...this.tree(all, a.address).map((s) => RANK[kidStatus(s.t, this.listed)] ?? 0))]));
+    const byPriority = !inbox && sort.id === "priority";
+    const urgency = new Map(list.map((a) => [a.address, Math.max(this.rank(a), ...kidsOf(a).map((s) => RANK[kidStatus(s.t, this.listed)] ?? 0))]));
     const rankOf = (a) => urgency.get(a.address);
     const priority = (x, y) => rankOf(y) - rankOf(x) || Number(Boolean(y.pinned)) - Number(Boolean(x.pinned))
       || this.since(y) - this.since(x) || y.seq - x.seq;
@@ -296,22 +339,50 @@ export default class Agents extends View {
       members: members.filter(agent => (rankOf(agent) || RANK.idle) === rank).sort(priority),
       idle: rank === RANK.idle,
     })).filter(section => section.members.length);
+    const childAgent = (terminal) => this.reported.get(terminal.address)
+      ?? { address: terminal.address, status: kidStatus(terminal, this.listed) };
+    const matches = (agent, state) => {
+      if (state === "unread") {
+        return this.isUnread(agent, this.readState) || kidsOf(agent).some(({ t }) => this.isUnread(childAgent(t), this.readState));
+      }
+      return (rankOf(agent) || RANK.idle) === RANK[state];
+    };
+    const shownInView = (agent, child = false) => {
+      if (agent.address === (child ? reviewAddress : reviewRow)) return true;
+      const test = child
+        ? state => state === "unread" ? this.isUnread(agent, this.readState) : agent.status === state
+        : state => matches(agent, state);
+      return filter ? test(filter) : !inbox || test("blocked") || test("unread");
+    };
+    const countsFor = (members) => Object.fromEntries([...PROJECT_BADGES, { id: "idle" }].map(({ id }) =>
+      [id, members.filter(agent => matches(agent, id)).length]));
+    const summary = countsFor(list);
+    const projectPriority = ({ counts }) =>
+      counts.blocked ? 4 : counts.unread ? 3 : counts.working ? 2 : counts.done ? 1 : 0;
+
+    const visiblePriority = group => Math.max(projectPriority(group),
+      group.members.some(agent => agent.address === reviewRow) ? 3 : 0);
     const bySpace = new Map();
+    const activeSpace = spaces().find(space => space.active)?.id;
     if (!byPriority) {
       for (const a of list) {
-        if (!bySpace.has(a.space)) bySpace.set(a.space, { id: `sp-${a.space}`, label: a.space_name || "Space", members: [] });
+        if (!bySpace.has(a.space)) bySpace.set(a.space, {
+          id: `sp-${a.space}`, label: a.space_name || "Space", active: a.space === activeSpace, members: [],
+        });
         bySpace.get(a.space).members.push(a);
       }
     }
-    const groups = byPriority ? sections(list, "sec") : [...bySpace.values()].map(group => {
-      const children = sections(group.members, group.id);
-      return { ...group, children, members: children.flatMap(section => section.members) };
-    });
+    const matching = (members) => constrained ? members.filter(agent => shownInView(agent)) : members;
+    const groups = byPriority ? sections(matching(list), "sec") : [...bySpace.values()].flatMap(group => {
+      const children = sections(matching(group.members), group.id);
+      if (!children.length) return [];
+      return [{ ...group, children, counts: countsFor(group.members), members: children.flatMap(section => section.members) }];
+    }).sort((a, b) => visiblePriority(b) - visiblePriority(a));
     list = groups.flatMap(group => group.members);
     setAgentOrder(list.map(a => a.address));
 
     const withKids = (a, i) => {
-      const subs = collapsed ? [] : this.tree(all, a.address);
+      const subs = collapsed ? [] : kidsOf(a).filter(({ t }) => !constrained || shownInView(childAgent(t), true));
       const r = row(a, i, subs);
       if (this.folded.has(a.address)) return [r];
       return [r, ...subs.map((s) => this.subRow(t, s, shown, byPriority))];
@@ -365,6 +436,7 @@ export default class Agents extends View {
     const row = (a, i, subs = []) => {
       const pic = icon(a.program, 16, t.foreground);
       const unread = this.isUnread(a, this.readState);
+      const reviewing = a.address === reviewAddress && !unread;
       const more = detail.get(a.address);
       // An agent on another machine (`vps/t7`) says which.
       const machine = a.address.includes("/") ? a.address.split("/")[0] : null;
@@ -378,7 +450,7 @@ export default class Agents extends View {
           .gap(4)
           .hover((s) => s.bg(t.hover))
           .on_mouse_down("right", (_e, cx) => { cx.stop_propagation(); this.openReadMenu(a); })
-          .on_click(() => this.openAgent(a, () => run("pane.focus", { pane: a.pane })))
+          .on_click((_e, cx) => this.openAgent(a, () => run("pane.focus", { pane: a.pane }), cx))
           .when(unread, el => el.child(this.unreadDot(t)))
           .child(div().flex_1().min_w(0).whitespace_nowrap().text_right().text_color(t.muted).child(String(i + 1)))
           .child(h_flex().w(14).flex_none().items_center().justify_center().child(this.status(t, a, true)));
@@ -417,7 +489,7 @@ export default class Agents extends View {
         .items_center()
         .gap(9)
         .tooltip(spaceName ? `${name} · ${spaceName}` : name)
-        .when(a.focused, (el) => el.bg(t.selected))
+        .when(a.focused || reviewing, (el) => el.bg(t.selected))
         .cursor_pointer()
         .hover((s) => s.bg(t.hover))
         .on_hover((on, cx) => {
@@ -426,7 +498,7 @@ export default class Agents extends View {
           cx.notify();
         })
         .on_mouse_down("right", (_e, cx) => { cx.stop_propagation(); this.openReadMenu(a); })
-        .on_click(() => this.openAgent(a, () => run("pane.focus", { pane: a.pane })))
+        .on_click((_e, cx) => this.openAgent(a, () => run("pane.focus", { pane: a.pane }), cx))
         .when(Boolean(pic), el => el.child(div().id(`agent-fold-${a.address}`)
           .when(subs.length > 0, el => el.on_click((_e, cx) => {
             cx.stop_propagation();
@@ -434,7 +506,7 @@ export default class Agents extends View {
             cx.notify();
           })).child(pic)))
         .child(v_flex().flex_1().min_w(0).gap(2).justify_center()
-          .child(div().min_w(0).truncate().text_color(idle && !unread ? t.muted : t.foreground)
+          .child(div().min_w(0).truncate().text_color(idle && !unread && !reviewing ? t.muted : t.foreground)
             .when(unread, el => el.font_semibold()).child(name))
           .when(Boolean(spaceName), el => el.child(div().min_w(0).truncate().text_size(10.5).text_color(t.dim).child(spaceName))))
         .when(Boolean(machine), el => el.child(div().text_size(10).text_color(t.dim).child(machine)))
@@ -444,35 +516,110 @@ export default class Agents extends View {
           el.child(svg("mods/workspace-chrome/pin.svg").size(11).flex_none().text_color(t.dim)))
         .when(this.hovered !== a.address && Boolean(when), el => el.child(div().flex_none().text_size(11).text_color(t.dim).child(duration(now - when))))
         .when(unread, el => el.child(this.unreadDot(t)))
-        .child(this.status(t, a, true));
+        .when(reviewing, el => el.child(this.reviewBadge(t)))
+        .child(this.status(t, inbox && rankOf(a) === RANK.blocked ? { status: "blocked" } : a, true));
     };
 
-    // Idle is initially folded both globally and inside each Space.
-    const folded = (group) => group.id !== "sec-1" && group.id.startsWith("sp-") && group.idle
-      ? !this.groupFolds.has(`open-${group.id}`)
-      : this.groupFolds.has(group.id);
+    const isQuiet = (group) => group.counts && projectPriority(group) === 0;
+    const folded = (group) => {
+      if (constrained) return this.filterFolds.has(group.id);
+      if (group.children) {
+        if (this.groupFolds.has(group.id)) return true;
+        return isQuiet(group) && !group.active && !this.groupFolds.has(`open-${group.id}`)
+          && !group.children.some(section => this.groupFolds.has(`open-${section.id}`));
+      }
+      if (group.idle && group.id.startsWith("sp-")) return !this.groupFolds.has(`open-${group.id}`);
+      return this.groupFolds.has(group.id);
+    };
+    const toggleGroup = (group, open, cx) => {
+      if (constrained) {
+        if (!this.filterFolds.delete(group.id)) this.filterFolds.add(group.id);
+      } else {
+        if (group.children) {
+          this.groupFolds.delete(`open-${group.id}`);
+          this.groupFolds.delete(group.id);
+          this.groupFolds.add(open ? group.id : `open-${group.id}`);
+        } else {
+          const key = group.idle && group.id.startsWith("sp-") ? `open-${group.id}` : group.id;
+          if (!this.groupFolds.delete(key)) this.groupFolds.add(key);
+        }
+        localStorage.setItem("groups.folded", JSON.stringify([...this.groupFolds]));
+      }
+      cx.notify();
+    };
+    const projectBadge = (item, count) => h_flex().h(19).px(4).gap(3).flex_none().items_center()
+      .rounded(4).bg(t.chrome).text_size(10.5).text_color(t[item.tone] ?? t.muted)
+      .tooltip(`${item.label} ${count}개`)
+      .when(compactSummary, el => el.child(div().size(4).rounded(2).bg(t[item.tone] ?? t.dim)))
+      .when(!compactSummary, el => el.child(item.short))
+      .child(div().font_semibold().child(String(count)));
     const header = (group, nested) => {
       const open = !folded(group);
-      const groupKey = nested && group.idle ? `open-${group.id}` : group.id;
-      const unread = group.members.filter(agent => this.isUnread(agent, this.readState)).length;
-      return h_flex().id(group.id).h(nested ? 25 : 29).flex_none().gap(6)
-        .pl(nested ? 18 : 8).pr(8).items_center().rounded(5).cursor_pointer()
-        .text_size(nested ? 11 : 12).font_medium().hover(style => style.bg(t.hover))
-        .on_click((_e, cx) => {
-          if (!this.groupFolds.delete(groupKey)) this.groupFolds.add(groupKey);
-          localStorage.setItem("groups.folded", JSON.stringify([...this.groupFolds]));
-          cx.notify();
-        })
+      const project = Boolean(group.children);
+      const quiet = !inbox && isQuiet(group);
+      const badges = project ? PROJECT_BADGES.filter(item => group.counts[item.id] > 0
+        && (!inbox || item.id === "blocked" || item.id === "unread")) : [];
+      const unread = !nested && !project ? group.members.filter(agent => this.isUnread(agent, this.readState)).length : 0;
+      return h_flex().id(group.id).h(project ? 34 : nested ? 24 : 29).flex_none().gap(6)
+        .pl(nested ? 18 : 8).pr(8).items_center().rounded(6).cursor_pointer()
+        .text_size(nested ? 11 : 12).font_medium()
+        .when(project && !quiet, el => el.bg(group.active ? t.selected : t.raised))
+        .hover(style => style.bg(t.hover))
+        .on_click((_e, cx) => toggleGroup(group, open, cx))
         .child(svg(`mods/workspace-chrome/chevron-${open ? "down" : "right"}.svg`).size(11).flex_none().text_color(t.dim))
-        .child(div().flex_1().min_w(0).truncate().text_color(group.children ? t.foreground : t[group.status] ?? t.dim).child(group.label))
+        .child(div().flex_1().min_w(0).truncate().tooltip(group.label)
+          .text_color(project ? (quiet && !group.active ? t.muted : t.foreground) : t[group.status] ?? t.dim)
+          .when(project && !quiet, el => el.font_semibold()).child(group.label))
+        .children(badges.map(item => projectBadge(item, group.counts[item.id])))
         .when(unread > 0, el => el.child(h_flex().gap(4).items_center().tooltip(`안 읽음 ${unread}개`)
           .child(this.unreadDot(t)).child(div().text_color(t.accent).child(String(unread)))))
-        .child(div().text_color(t.dim).child(String(group.members.length)));
+        .when(!project || quiet, el => el.child(div().text_size(10.5).text_color(t.dim)
+          .child(project ? `유휴 ${group.counts.idle}` : String(group.members.length))));
     };
-    const drawGroup = (group, nested = false) => [header(group, nested), ...(folded(group) ? []
-      : group.children ? group.children.flatMap(section => drawGroup(section, true))
-      : group.members.flatMap(withKids))];
-    const rows = collapsed ? list.flatMap(withKids) : groups.flatMap(group => drawGroup(group));
+    const drawGroup = (group, nested = false) => [
+      header(group, nested),
+      ...(folded(group) ? [] : group.children
+        ? (group.children.length === 1 && group.children[0].idle
+          ? group.members.flatMap(withKids) : group.children.flatMap(section => drawGroup(section, true)))
+        : group.members.flatMap(withKids)),
+    ];
+    const rows = collapsed ? list.flatMap(withKids) : groups.flatMap(group =>
+      [v_flex().pb(group.children ? 5 : 3).children(drawGroup(group))]);
+    const summaryButton = (item) => {
+      const count = summary[item.id];
+      const selected = filter === item.id;
+      return h_flex().id(`agents-filter-${item.id}`).flex_1().min_w(0).h(27).px(5).gap(4)
+        .items_center().justify_center().rounded(6).border_1()
+        .border_color(selected ? t[item.tone] : t.border).bg(selected ? t.selected : t.raised)
+        .cursor_pointer().hover(style => style.bg(t.hover))
+        .tooltip(`${item.label} ${count}개 · ${selected ? "필터 해제" : "이 항목만 보기"}`)
+        .on_click((_e, cx) => {
+          this.filter = selected ? null : item.id;
+          if (!inbox) this.review = null;
+          this.filterFolds.clear();
+          cx.notify();
+        })
+        .child(div().min_w(0).truncate().text_size(11).text_color(count || selected ? t.foreground : t.muted)
+          .child(compactSummary ? item.short : item.label))
+        .child(div().flex_none().text_size(11).font_semibold().text_color(count ? t[item.tone] : t.dim).child(String(count)));
+    };
+
+    const modeButton = (id, label, short) => {
+      const selected = this.mode === id;
+      return h_flex().id(`agents-mode-${id}`).h(25).px(compactSummary ? 5 : 8).items_center()
+        .justify_center().rounded(5).cursor_pointer().text_size(11)
+        .text_color(selected ? t.foreground : t.muted)
+        .when(selected, el => el.bg(t.selected).font_semibold())
+        .hover(style => style.bg(t.hover)).tooltip(label)
+        .on_click((_e, cx) => {
+          if (selected) return;
+          this.mode = id;
+          this.filter = null;
+          this.review = null;
+          this.filterFolds.clear();
+          cx.notify();
+        }).child(compactSummary ? short : label);
+    };
 
     return v_flex()
       .size_full()
@@ -490,9 +637,12 @@ export default class Agents extends View {
             .pb(5)
             .flex_none()
             .items_center()
-            .justify_between()
-            .child(div().text_size(11.5).font_medium().text_color(t.dim).child("Agents"))
-            .child(
+            .gap(7)
+            .child(div().flex_1().min_w(0).truncate().text_size(11.5).font_medium().text_color(t.dim).child("Agents"))
+            .child(h_flex().p(2).gap(2).flex_none().rounded(6).border_1().border_color(t.border)
+              .child(modeButton("inbox", "확인할 작업", "확인"))
+              .child(modeButton("all", "전체 보기", "전체")))
+            .when(!inbox, el => el.child(
               div()
                 .id("ag-sort")
                 .text_size(11)
@@ -501,12 +651,14 @@ export default class Agents extends View {
                 .on_click(() => openOverlay({ mod: "personal-company-agents", kind: "popup", width: 200, height: 140, props: { sortMenu: true } }))
                 .tooltip(`정렬 기준 · ${sort.label}`)
                 .child(svg(`mods/workspace-chrome/${sort.icon}.svg`).size(14)),
-            ),
+            )),
         ),
       )
-      .when(list.length === 0 && !collapsed, (el) =>
-        el.child(div().px(12).text_size(12).text_color(t.dim).child("No agent status yet. Agents show up here when they report their status. Older versions and agents inside tmux may not.")),
-      )
+      .when(!collapsed && this.reported.size > 0, el => el.child(h_flex().px(10).pb(8).gap(5).flex_none()
+        .children(FILTERS.filter(item => !inbox || item.id !== "working").map(summaryButton))))
+      .when(list.length === 0 && !collapsed, el => el.child(div().px(12).py(6).text_size(12).text_color(t.muted)
+        .child(filter ? "이 상태에 해당하는 에이전트가 없습니다."
+          : inbox ? "지금 확인할 작업이 없습니다." : "상태를 보고하는 에이전트가 여기에 표시됩니다.")))
       .child(v_flex().id("ag-list").flex_1().min_h(0).px(collapsed ? 0 : 8).overflow_y_scrollbar().mode("always").children(rows))
       .when(collapsed, (el) =>
         el.child(
