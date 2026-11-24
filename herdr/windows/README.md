@@ -6,7 +6,7 @@ Herdr App용 레이아웃과 Mod 묶음입니다. 그룹별 Spaces, 워크트리
 
 Windows에서 ZIP을 푼 뒤 Herdr 안에서 Codex나 Claude Code를 열고 아래 문구를 붙여넣습니다. 두 경로는 실제 압축 해제 위치와 그룹 폴더로 바꿉니다.
 
-> 내 Herdr App의 AGENTS.md와 `C:\Users\me\Downloads\herdr-config\windows\RECIPE.md`를 읽고 이 레이아웃을 추가해줘. 그룹 폴더는 `D:\Work`야. 기존 레이아웃과 세션은 유지한 채, 설치한 Mod를 검사하고 Herdr Workspace · Windows를 열어줘.
+> 내 Herdr App의 AGENTS.md와 `C:\Users\me\Downloads\agent-ide-config\herdr\windows\RECIPE.md`를 읽고 이 레이아웃을 추가해줘. 그룹 폴더는 `D:\Work`야. 기존 레이아웃과 세션은 유지한 채, 설치한 Mod를 검사하고 Herdr Workspace · Windows를 열어줘.
 
 [설치 레시피](RECIPE.md)에 복사할 파일, 단축키 병합, Windows 경로와 앱 내 확인 방법이 있습니다.
 
