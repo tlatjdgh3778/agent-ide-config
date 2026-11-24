@@ -460,9 +460,16 @@ export default class Spaces extends View {
     }
   }
 
-  // A Space opened on a checkout keeps that identity when a shell changes folder.
+  // Where the space actually is decides what it shows; the folder it was made
+  // in only answers while that place hasn't been looked at yet. A looked-at
+  // place that holds no repo answers null, which is an answer, not a miss --
+  // otherwise a space whose shell moved to a plain folder would keep showing
+  // the repository it was opened on.
   gitForSpace(space, ps) {
-    return this.git[spaceFolder(space)] ?? this.git[where(space, ps)] ?? null;
+    const live = where(space, ps);
+    if (live in this.git) return this.git[live];
+    const declared = spaceFolder(space);
+    return declared in this.git ? this.git[declared] : null;
   }
 
   // Reuse Git's common directory to group checkout spaces in this view only.
@@ -484,9 +491,9 @@ export default class Spaces extends View {
     }
     const children = new Map();
     for (const row of rows) {
-      // A verified child gives the exact common directory even while the main
-      // Space's Git probe is in flight or temporarily unavailable.
-      const parent = row.g?.linked && (declaredRoots.get(row.g.repo) ?? roots.get(row.g.repo));
+      // A checkout git confirmed wins; the folder a space declares is only a
+      // stand-in for while that probe is in flight or the machine is away.
+      const parent = row.g?.linked && (roots.get(row.g.repo) ?? declaredRoots.get(row.g.repo));
       if (!parent || parent === row) continue;
       row.parent = parent.w.id;
       if (!children.has(row.parent)) children.set(row.parent, []);
