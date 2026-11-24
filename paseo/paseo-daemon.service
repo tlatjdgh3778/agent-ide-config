@@ -1,0 +1,18 @@
+[Unit]
+Description=Paseo daemon (WSL host)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+Environment=HOME=/root
+Environment=PASEO_HOME=/root/.paseo
+Environment=PATH=/root/.nvm/versions/node/v24.21.0/bin:/root/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+WorkingDirectory=/root
+ExecStart=/root/.nvm/versions/node/v24.21.0/bin/paseo daemon run
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
