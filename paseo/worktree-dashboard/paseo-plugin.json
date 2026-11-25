@@ -1,0 +1,7 @@
+{
+  "id": "worktree-dashboard",
+  "name": "Worktree Board",
+  "requirements": {
+    "paseo": ">=0.17.4"
+  }
+}

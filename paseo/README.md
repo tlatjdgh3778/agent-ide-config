@@ -6,6 +6,7 @@ Paseo 구성입니다. Paseo 플러그인은 운영체제와 관계없이 같은
 |---|---|
 | [`machine-groups/`](machine-groups/) | 머신(호스트) → 그룹 → 작업 공간 사이드바 |
 | [`project-groups/`](project-groups/) | 그룹 → 프로젝트 → 작업 공간 사이드바. [topar12/paseo-project-groups](https://github.com/topar12/paseo-project-groups) 1.5.0 사본에 워크트리 기능 추가 |
+| [`worktree-dashboard/`](worktree-dashboard/) | 프로젝트별 워크트리 카드와 검정고양이 에이전트 상태 보드 |
 
 ## 구성
 
@@ -55,3 +56,16 @@ paseo plugin install "$PWD"
 - 보관한 작업 공간의 배정은 남아 있어서, 보관을 풀면 원래 그룹으로 돌아옵니다.
 
 개발: `npm test`(그룹 로직 단위 테스트), `npm run typecheck`. 코드를 고친 뒤 `paseo plugin reload machine-groups`.
+
+## worktree-dashboard
+
+Paseo 0.17.4 이상에서 사이드바 또는 Command Center의 **워크트리 보드**를 엽니다. 보드는 현재 선택한 호스트의 작업 공간을 읽습니다. **워크트리만**을 누르면 원본 체크아웃과 일반 폴더를 접고 Git 워크트리만 봅니다.
+
+```sh
+cd worktree-dashboard
+npm ci
+npm run typecheck
+paseo plugin install "$PWD"
+```
+
+코드를 수정한 뒤에는 `paseo plugin reload worktree-dashboard`를 실행합니다.
