@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from "react"
 import { Modal as NativeModal, Pressable, Text, View, useWindowDimensions } from "react-native";
 import {
   appearanceDocument,
+  rowTrailingOf,
   WORKSPACE_SORTS,
   WORKSPACE_TITLES,
   type AppearanceValues,
@@ -156,7 +157,7 @@ function DisplayMenu({ theme, compact, onClose }: { theme: Theme; compact: boole
       if (!saved) setPending(null);
     });
   };
-  const trailing: RowTrailing = values.rowTrailing ?? (values.showDiffStats ? "diff" : "none");
+  const trailing: RowTrailing = rowTrailingOf(values);
   /** Picking the choice already showing empties the slot, like the app. */
   const toggleTrailing = (choice: RowTrailing) =>
     update({ rowTrailing: trailing === choice ? "none" : choice });
@@ -227,13 +228,6 @@ function DisplayMenu({ theme, compact, onClose }: { theme: Theme; compact: boole
           onPress={() => update({ showLabels: !values.showLabels })}
         />
         <Separator theme={theme} />
-        <Item
-          {...row}
-          label={t("display.diff")}
-          icon="Diff"
-          checked={trailing === "diff"}
-          onPress={() => toggleTrailing("diff")}
-        />
         <Item
           {...row}
           label={t("display.timestamp")}

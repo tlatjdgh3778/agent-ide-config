@@ -1,5 +1,5 @@
 import { createContext, useContext } from "react";
-import { appearanceDocument, type AppearanceValues, type RowTrailing, type WorkspaceSort, type WorkspaceTitle } from "../shared/settings";
+import { appearanceDocument, type AppearanceValues, type RowTrailing, type WorkspaceSort, type WorkspaceTitle, rowTrailingOf } from "../shared/settings";
 
 /** Concrete sizes derived from the appearance settings. Every row reads these. */
 export interface Look {
@@ -63,7 +63,7 @@ export function lookFrom(values: AppearanceValues): Look {
     showHostTags: values.showHostTags,
     showStatusDots: values.showStatusDots,
     showFoldedStatus: values.showFoldedStatus,
-    trailing: values.rowTrailing ?? (values.showDiffStats ? "diff" : "none"),
+    trailing: rowTrailingOf(values),
     showBranch: values.showBranch,
     showLabels: values.showLabels,
     showPinned: values.showPinned,

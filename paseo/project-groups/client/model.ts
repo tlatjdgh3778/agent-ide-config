@@ -351,3 +351,18 @@ export function parseProjectKey(key: string): { hostId: string; projectId: strin
   }
   return null;
 }
+
+type Sortable = { kind: string; name: string; createdAt: string | null; lastPromptAt: string | null; ref: { key: string } };
+
+/**
+ * A project's own checkout (or plain folder) before its worktrees, each part in the chosen
+ * order, so worktrees read as hanging off the checkout above them.
+ */
+export function checkoutsFirst(sort: "name" | "created" | "lastPrompt"): (a: Sortable, b: Sortable) => number {
+  const within =
+    sort === "name"
+      ? (a: Sortable, b: Sortable) => a.name.localeCompare(b.name) || a.ref.key.localeCompare(b.ref.key)
+      : compareWorkspaceTimes(sort);
+  const rank = (item: Sortable) => (item.kind === "worktree" ? 1 : 0);
+  return (a, b) => rank(a) - rank(b) || within(a, b);
+}

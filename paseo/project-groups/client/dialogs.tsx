@@ -1,4 +1,5 @@
 import {
+  useAgents,
   usePaseo,
   useProject,
   useRpc,
@@ -14,6 +15,7 @@ import { Pressable, Text, View } from "react-native";
 import { useT } from "./i18n";
 import { labelColors, labelKey, useLabelCatalog } from "./labels";
 import { groupOfProject, type Parents } from "./model";
+import { branchProblem } from "../shared/branch";
 import { markWorkspaceRpc } from "../shared/rpc";
 import type { ProjectGroup } from "../shared/settings";
 
@@ -230,6 +232,7 @@ export function ProjectMenuDialog({
   onChooseParent,
   onUnnest,
   onNewWorkspace,
+  onNewWorktree,
   onOpenSettings,
   onDecorate,
   onRemove,
@@ -245,6 +248,7 @@ export function ProjectMenuDialog({
   onChooseParent: (parentKey: string) => void;
   onUnnest: () => void;
   onNewWorkspace: () => void;
+  onNewWorktree: () => void;
   /** Undefined where the app's project settings page can't be opened. */
   onOpenSettings?: () => void;
   onDecorate: (name: string) => void;
@@ -297,6 +301,7 @@ export function ProjectMenuDialog({
         />
         <MenuSection title={t("project.actionsSection")} theme={theme}>
           <MenuRow label={t("project.newWorkspaceItem")} icon="Plus" theme={theme} onPress={onNewWorkspace} />
+          <MenuRow label={t("project.newWorktreeItem")} icon="GitBranch" theme={theme} onPress={onNewWorktree} />
           {onOpenSettings ? (
             <MenuRow label={t("project.openSettings")} icon="Settings" theme={theme} onPress={onOpenSettings} />
           ) : null}
@@ -396,6 +401,9 @@ export function WorkspaceMenuDialog({
     labels: item.labels,
     status: item.status,
   }));
+  // Paseo keeps read state on agents, so a workspace with only terminal sessions (an agent run in a
+  // terminal) has nothing to mark unread; the daemon refuses with "no read agent".
+  const agents = useAgents({ where: (agent) => agent.workspace.key === reference.key && !agent.background });
   const [step, setStep] = useState<"menu" | "rename" | "archive" | "labels">("menu");
   const mark = useRpc(markWorkspaceRpc);
   const [initialName, setInitialName] = useState("");
@@ -489,7 +497,11 @@ export function WorkspaceMenuDialog({
   if (step === "archive") {
     return (
       <Modal
-        title={t("workspace.archiveTitle", { name: workspace.title })}
+        title={
+          workspace.worktree
+            ? t("workspace.removeWorktreeTitle", { name: workspace.title })
+            : t("workspace.archiveTitle", { name: workspace.title })
+        }
         open
         onOpenChange={closeOnDismiss(onClose)}
       >
@@ -503,7 +515,15 @@ export function WorkspaceMenuDialog({
           <Buttons>
             <DialogButton label={t("common.cancel")} theme={theme} onPress={onClose} disabled={busy} />
             <DialogButton
-              label={busy ? t("workspace.archiving") : t("workspace.archive")}
+              label={
+                workspace.worktree
+                  ? busy
+                    ? t("workspace.removing")
+                    : t("workspace.remove")
+                  : busy
+                    ? t("workspace.archiving")
+                    : t("workspace.archive")
+              }
               theme={theme}
               kind="danger"
               disabled={busy}
@@ -538,7 +558,9 @@ export function WorkspaceMenuDialog({
             setStep("rename");
           }}
         />
-        {workspace.status === "attention" || workspace.status === "failed" || workspace.status === "done" ? (
+        {workspace.status === "attention" ||
+        workspace.status === "failed" ||
+        (workspace.status === "done" && agents.length > 0) ? (
           <MenuRow
             label={workspace.status === "done" ? t("workspace.markUnread") : t("workspace.markRead")}
             icon={workspace.status === "done" ? "CircleDot" : "CircleCheck"}
@@ -595,8 +617,8 @@ export function WorkspaceMenuDialog({
           />
         ) : null}
         <MenuRow
-          label={t("workspace.archive")}
-          icon="Archive"
+          label={workspace.worktree ? t("workspace.removeWorktree") : t("workspace.archive")}
+          icon={workspace.worktree ? "Trash2" : "Archive"}
           theme={theme}
           danger
           onPress={() => setStep("archive")}
@@ -754,6 +776,122 @@ export function DeleteGroupDialog({
         <Buttons>
           <DialogButton label={t("common.cancel")} theme={theme} onPress={onClose} />
           <DialogButton label={t("group.deleteConfirm")} theme={theme} kind="danger" onPress={onConfirm} />
+        </Buttons>
+      </Modal.Content>
+    </Modal>
+  );
+}
+
+/**
+ * A new worktree of a project on a branch made for it, from a base the user may name. Paseo
+ * creates and owns the worktree, so archiving its workspace later removes it again.
+ */
+export function NewWorktreeDialog({
+  reference,
+  theme,
+  onClose,
+}: {
+  reference: ProjectRef;
+  theme: Theme;
+  onClose: () => void;
+}) {
+  const t = useT();
+  const paseo = usePaseo();
+  const toast = useToast();
+  const project = useProject(reference, (item) => ({ name: item.displayName, path: item.rootPath }));
+  // Uncontrolled inputs leave composition to the native IME, as in the rename dialog.
+  const branch = useRef("");
+  const base = useRef("");
+  const [problem, setProblem] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const name = project?.name ?? reference.id;
+  const submit = () => {
+    const branchName = branch.current.trim();
+    const found = branchProblem(branchName);
+    setProblem(found);
+    if (found || busy) return;
+    const baseBranch = base.current.trim();
+    setBusy(true);
+    paseo.projects
+      .ref(reference)
+      .createWorkspace({
+        title: branchName,
+        source: {
+          kind: "worktree",
+          projectId: reference.id,
+          ...(project ? { cwd: project.path } : {}),
+          action: "branch-off",
+          branchName,
+          ...(baseBranch ? { baseBranch } : {}),
+        },
+      })
+      .then(
+        () => {
+          onClose();
+          toast.show(t("project.worktreeCreated"));
+        },
+        (error: unknown) => {
+          setBusy(false);
+          toast.error(`${t("project.worktreeCreateFailed")} ${errorText(error)}`);
+        },
+      );
+  };
+  const input = {
+    color: theme.colors.foreground,
+    fontSize: 13,
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    backgroundColor: theme.colors.surface1,
+  };
+  const label = { color: theme.colors.foregroundMuted, fontSize: 12 };
+  return (
+    <Modal title={t("project.newWorktreeTitle", { name })} open onOpenChange={closeOnDismiss(onClose)}>
+      <Modal.Content>
+        <View style={{ gap: 6 }}>
+          <Text style={label}>{t("project.worktreeBranch")}</Text>
+          <TextInput
+            accessibilityLabel={t("project.worktreeBranch")}
+            autoFocus
+            autoCapitalize="none"
+            autoCorrect={false}
+            onChangeText={(text) => {
+              branch.current = text;
+              if (problem) setProblem(branchProblem(text));
+            }}
+            onSubmitEditing={submit}
+            editable={!busy}
+            placeholder={t("project.worktreeBranchPlaceholder")}
+            placeholderTextColor={theme.colors.foregroundMuted}
+            style={input}
+          />
+          {problem ? <Text style={{ color: theme.colors.statusDanger, fontSize: 12 }}>{problem}</Text> : null}
+          <Text style={[label, { marginTop: 6 }]}>{t("project.worktreeBase")}</Text>
+          <TextInput
+            accessibilityLabel={t("project.worktreeBase")}
+            autoCapitalize="none"
+            autoCorrect={false}
+            onChangeText={(text) => {
+              base.current = text;
+            }}
+            onSubmitEditing={submit}
+            editable={!busy}
+            placeholder="origin/develop"
+            placeholderTextColor={theme.colors.foregroundMuted}
+            style={input}
+          />
+        </View>
+        <Buttons>
+          <DialogButton label={t("common.cancel")} theme={theme} onPress={onClose} disabled={busy} />
+          <DialogButton
+            label={busy ? t("project.worktreeCreating") : t("project.worktreeCreate")}
+            theme={theme}
+            kind="primary"
+            onPress={submit}
+            disabled={busy}
+          />
         </Buttons>
       </Modal.Content>
     </Modal>

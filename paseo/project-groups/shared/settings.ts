@@ -45,6 +45,11 @@ export const LANGUAGES = ["auto", "en", "ko", "zh-CN"] as const;
 export const WORKSPACE_SORTS = ["name", "created", "lastPrompt"] as const;
 export const WORKSPACE_TITLES = ["title", "branch"] as const;
 export const ROW_TRAILINGS = ["diff", "timestamp", "none"] as const;
+/**
+ * The choices this copy offers. Changed lines are not shown, though `diff` stays in the
+ * schema so settings saved by the original plugin still load.
+ */
+export const SHOWN_TRAILINGS = ["timestamp", "none"] as const;
 
 /** Sidebar look. Device scope because text size and spacing depend on the screen. */
 export const appearanceDocument = defineSettings({
@@ -123,3 +128,8 @@ export const decorationsDocument = defineSettings({
 
 export type DecorationsValues = z.infer<typeof decorationsDocument.schema>;
 export type DecorationKind = keyof DecorationsValues;
+
+/** What sits right of a workspace name. Anything but the last-activity time shows nothing. */
+export function rowTrailingOf(values: Pick<AppearanceValues, "rowTrailing">): (typeof SHOWN_TRAILINGS)[number] {
+  return values.rowTrailing === "timestamp" ? "timestamp" : "none";
+}

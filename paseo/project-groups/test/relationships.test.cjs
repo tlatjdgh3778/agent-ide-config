@@ -739,7 +739,8 @@ test("By relation view displays clickable tree rows with full project names, no 
   assert.ok(treeText.includes("MOM报表"));
   assert.ok(treeText.includes("MOM 权限工作台"));
   assert.ok(treeText.includes("mom-permission-workbench"), "full project name visible in relation tree");
-  assert.ok(treeText.includes("+33537"), "diff stats visible in relation tree");
+  // This copy shows no changed-line counts.
+  assert.ok(!treeText.includes("+33537"), "diff stats hidden in relation tree");
 
   // Single-agent workspace fallback still highlights MOM报表 as selected in relation tree.
   const repRow = renderer.root.findByProps({ accessibilityLabel: "打开MOM报表", accessibilityRole: "button" });

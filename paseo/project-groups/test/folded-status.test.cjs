@@ -511,6 +511,7 @@ test("workspace title drops vertical flex and keeps status dot and running ring 
   const lookModule = load("look.tsx", {
     react: React,
     "../shared/settings": {
+      rowTrailingOf: (values) => (values.rowTrailing === "timestamp" ? "timestamp" : "none"),
       appearanceDocument: { schema: { parse: () => ({ textSize: 12, density: "comfortable", indent: "normal", groupSpacing: "small", boldGroupNames: true, showProjectIcons: true, showHostTags: true, showStatusDots: true, showFoldedStatus: true, showDiffStats: true, showBranch: false, showLabels: true, showPinned: true, workspaceSort: "name", workspaceTitle: "title", showBackground: false, language: "auto" }) } },
     },
   });

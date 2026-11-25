@@ -15,7 +15,8 @@ import {
   GROUP_SPACINGS,
   INDENTS,
   LANGUAGES,
-  ROW_TRAILINGS,
+  SHOWN_TRAILINGS,
+  rowTrailingOf,
   TEXT_SIZES,
   WORKSPACE_SORTS,
   WORKSPACE_TITLES,
@@ -63,12 +64,7 @@ function Preview({ values, theme }: { values: AppearanceValues; theme: PluginSur
         <Text numberOfLines={1} style={styles.workspaceName}>
           {t("settings.sampleWorkspace")}
         </Text>
-        {look.trailing === "diff" ? (
-          <Text style={styles.detail}>
-            <Text style={{ color: theme.colors.statusSuccess }}>+42</Text>{" "}
-            <Text style={{ color: theme.colors.statusDanger }}>−7</Text>
-          </Text>
-        ) : look.trailing === "timestamp" ? (
+        {look.trailing === "timestamp" ? (
           <Text style={styles.detail}>5m</Text>
         ) : null}
       </View>
@@ -231,8 +227,8 @@ export function AppearanceSettings({ theme }: PluginSurfaceProps) {
           />
           <SettingsSelect
             label={t("settings.rowTrailing")}
-            value={values.rowTrailing ?? (values.showDiffStats ? "diff" : "none")}
-            options={ROW_TRAILINGS.map((trailing) => ({ value: trailing, label: t(`settings.rowTrailings.${trailing}`) }))}
+            value={rowTrailingOf(values)}
+            options={SHOWN_TRAILINGS.map((trailing) => ({ value: trailing, label: t(`settings.rowTrailings.${trailing}`) }))}
             onValueChange={(rowTrailing) => update({ rowTrailing })}
           />
           <SettingsSwitch

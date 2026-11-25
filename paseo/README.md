@@ -5,6 +5,7 @@ Paseo 구성입니다. Paseo 플러그인은 운영체제와 관계없이 같은
 | 폴더 | 내용 |
 |---|---|
 | [`machine-groups/`](machine-groups/) | 머신(호스트) → 그룹 → 작업 공간 사이드바 |
+| [`project-groups/`](project-groups/) | 그룹 → 프로젝트 → 작업 공간 사이드바. [topar12/paseo-project-groups](https://github.com/topar12/paseo-project-groups) 1.5.0 사본에 워크트리 기능 추가 |
 
 ## 구성
 

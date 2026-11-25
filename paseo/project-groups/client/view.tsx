@@ -34,7 +34,7 @@ import {
   type DecorateTarget,
   type Decorations,
 } from "./decor";
-import { DeleteGroupDialog, ProjectMenuDialog, RemoveProjectDialog, WorkspaceMenuDialog } from "./dialogs";
+import { DeleteGroupDialog, NewWorktreeDialog, ProjectMenuDialog, RemoveProjectDialog, WorkspaceMenuDialog } from "./dialogs";
 import { DragProvider, useDragController } from "./drag";
 import type { Hit } from "./hit";
 import { useT } from "./i18n";
@@ -105,6 +105,7 @@ type Theme = PluginSidebarViewProps["theme"];
 type Dialog =
   | { kind: "project"; reference: ProjectRef }
   | { kind: "remove-project"; reference: ProjectRef }
+  | { kind: "new-worktree"; reference: ProjectRef }
   | { kind: "workspace"; reference: WorkspaceRef }
   | { kind: "delete-group"; group: ProjectGroup }
   | { kind: "decorate"; target: DecorateTarget };
@@ -1103,6 +1104,7 @@ function GroupsList(view: PluginSidebarViewProps) {
               setDialog(null);
               view.navigation.openProject(dialog.reference);
             }}
+            onNewWorktree={() => setDialog({ kind: "new-worktree", reference: dialog.reference })}
             onOpenSettings={WEB ? () => openProjectSettings(dialog.reference) : undefined}
             onDecorate={(name) =>
               setDialog({ kind: "decorate", target: { kind: "projects", key: dialog.reference.key, name } })
@@ -1110,6 +1112,9 @@ function GroupsList(view: PluginSidebarViewProps) {
             onRemove={() => setDialog({ kind: "remove-project", reference: dialog.reference })}
             onClose={closeDialog}
           />
+        ) : null}
+        {dialog?.kind === "new-worktree" ? (
+          <NewWorktreeDialog reference={dialog.reference} theme={view.theme} onClose={closeDialog} />
         ) : null}
         {dialog?.kind === "remove-project" ? (
           <RemoveProjectDialog

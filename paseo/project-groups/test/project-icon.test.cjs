@@ -251,7 +251,7 @@ test("project rows honor the icon visibility setting and keep overrides visible"
     "./project-icon": { ProjectIcon: "ProjectIcon" },
     "./running-spinner": { RunningSpinner: "RunningSpinner" },
     "./labels": { LabelChip: "LabelChip", labelKey: (name) => name.toLowerCase(), useLabelCatalog: () => ({ labels: null, refresh() {} }) },
-    "./model": { mostUrgent: () => "done", compareWorkspaceTimes: () => () => 0, compactTimeAgo: () => "" },
+    "./model": { mostUrgent: () => "done", compareWorkspaceTimes: () => () => 0, checkoutsFirst: () => () => 0, compactTimeAgo: () => "" },
     "./i18n": { useT: () => key => key },
     "./look": { useLook: () => ({ showProjectIcons, icon: 13 }) },
     "./decor": { useDecorations: () => ({ get: () => ({ icon: override, color: null }) }) },

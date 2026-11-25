@@ -50,6 +50,7 @@ function loadMenu(values) {
     "@getpaseo/plugin/client/ui": { Icon: "Icon", Modal },
     "../shared/settings": {
       appearanceDocument: {},
+      rowTrailingOf: (values) => (values.rowTrailing === "timestamp" ? "timestamp" : "none"),
       WORKSPACE_SORTS: ["name", "created", "lastPrompt"],
       WORKSPACE_TITLES: ["title", "branch"],
     },
@@ -148,10 +149,10 @@ test("picking the trailing choice already showing empties the slot", async (t) =
   const { renderer, press, saved } = await openMenu();
   t.after(() => act(() => renderer.unmount()));
   await press("display.show");
-  await press("display.diff");
-  assert.equal(saved.at(-1).rowTrailing, "none");
   await press("display.timestamp");
   assert.equal(saved.at(-1).rowTrailing, "timestamp");
+  await press("display.timestamp");
+  assert.equal(saved.at(-1).rowTrailing, "none");
 });
 
 test("Settings… closes the menu and opens the appearance settings", async (t) => {

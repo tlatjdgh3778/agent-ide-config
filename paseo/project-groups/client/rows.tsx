@@ -15,7 +15,7 @@ import { DecorIcon, useDecorations } from "./decor";
 import { useT } from "./i18n";
 import { useLook, type Look } from "./look";
 import { LabelChip, labelKey, useLabelCatalog } from "./labels";
-import { compactTimeAgo, compareWorkspaceTimes, mostUrgent } from "./model";
+import { checkoutsFirst, compactTimeAgo, mostUrgent } from "./model";
 import { ProjectIcon } from "./project-icon";
 import { RunningSpinner } from "./running-spinner";
 import { sidebarNavProps } from "./web";
@@ -468,6 +468,10 @@ const INDICATOR_COLOR = {
   attention: "statusSuccess",
 } as const;
 
+/** The status dot's box and the space after it, matching the row gap it used to sit in. */
+const STATUS_WIDTH = 12;
+const STATUS_GAP = 6;
+
 export function StatusDot({ color, running = false }: { color: string; running?: boolean }) {
   return (
     <View
@@ -633,11 +637,10 @@ export function WorkspaceRow({
     title: (look.workspaceTitle === "branch" ? item.branch : null) ?? item.title ?? item.name,
     indicator: item.indicator,
     indicatorLabel: item.indicatorLabel,
-    additions: item.diffStat?.additions ?? 0,
-    deletions: item.diffStat?.deletions ?? 0,
     branch: item.branch,
     labels: item.labels,
     enteredAt: item.statusEnteredAt,
+    worktree: item.kind === "worktree",
   }));
   const open = useCallback(() => view.navigation.openWorkspace(reference), [view.navigation, reference]);
   if (!workspace) return null;
@@ -647,12 +650,7 @@ export function WorkspaceRow({
   const tone = workspace.indicator === "done" ? null : INDICATOR_COLOR[workspace.indicator];
   const color = tone ? view.theme.colors[tone] : "transparent";
   const trailing =
-    look.trailing === "diff" && (workspace.additions || workspace.deletions) ? (
-      <Text selectable={false} numberOfLines={1} style={styles.detail}>
-        <Text style={{ color: view.theme.colors.statusSuccess }}>+{workspace.additions}</Text>{" "}
-        <Text style={{ color: view.theme.colors.statusDanger }}>−{workspace.deletions}</Text>
-      </Text>
-    ) : look.trailing === "timestamp" && workspace.enteredAt ? (
+    look.trailing === "timestamp" && workspace.enteredAt ? (
       <TimeAgo iso={workspace.enteredAt} style={styles.detail} />
     ) : null;
   const { flex: _fill, ...titleStyle } = styles.workspaceName;
@@ -674,12 +672,25 @@ export function WorkspaceRow({
         active ? styles.selected : relation?.highlighted && { backgroundColor: view.theme.colors.surface1 },
       ]}
     >
-      {look.showStatusDots ? <StatusDot color={color} running={workspace.indicator === "running"} /> : null}
       <View style={{ flex: 1, minWidth: 0, paddingVertical: branch || labels.length ? 3 : 0 }}>
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 4, minWidth: 0 }}>
+        {/* On the title line, so a two-line row keeps its status beside the name, not between lines. */}
+        {look.showStatusDots ? (
+          <View style={{ marginRight: STATUS_GAP - 4 }}>
+            <StatusDot color={color} running={workspace.indicator === "running"} />
+          </View>
+        ) : null}
+        {/* Tells a worktree from the project's own checkout. */}
+        {workspace.worktree ? (
+          <View accessibilityLabel="worktree">
+            <Icon name="GitBranch" size={look.small} color={view.theme.colors.foregroundMuted} />
+          </View>
+        ) : null}
         <Text
           selectable={false}
           numberOfLines={1}
           style={[
+            { flexShrink: 1 },
             titleStyle,
             nameColor ? { color: nameColor } : null,
             active || hover.hovered ? { opacity: 1 } : null,
@@ -687,8 +698,16 @@ export function WorkspaceRow({
         >
           {workspace.title}
         </Text>
+        </View>
         {branch || labels.length ? (
-          <MetaLine hostId={reference.hostId} branch={branch} labels={labels} theme={view.theme} />
+          <MetaLine
+            hostId={reference.hostId}
+            branch={branch}
+            labels={labels}
+            theme={view.theme}
+            // Starts where the name does: past the status dot and the worktree mark.
+            inset={(look.showStatusDots ? STATUS_WIDTH + STATUS_GAP : 0) + (workspace.worktree ? look.small + 4 : 0)}
+          />
         ) : null}
       </View>
       {relation?.trailing}
@@ -712,11 +731,14 @@ function MetaLine({
   branch,
   labels,
   theme,
+  inset = 0,
 }: {
   hostId: string;
   branch: string | null;
   labels: readonly string[];
   theme: Theme;
+  /** Left space so the line starts under the name. */
+  inset?: number;
 }) {
   const look = useLook();
   const styles = useRowStyles(theme);
@@ -726,7 +748,7 @@ function MetaLine({
   if (branch) {
     items.push(
       <View key="branch" style={{ flexDirection: "row", alignItems: "center", gap: 3, flexShrink: 1, minWidth: 0 }}>
-        <Icon name="GitBranch" size={look.small} color={theme.colors.foregroundMuted} />
+        {/* No branch icon here: that mark is kept for worktree titles, so the two don't read alike. */}
         <Text selectable={false} numberOfLines={1} style={[styles.detail, { flexShrink: 1 }]}>
           {branch}
         </Text>
@@ -746,7 +768,7 @@ function MetaLine({
     );
   }
   return (
-    <View style={{ flexDirection: "row", alignItems: "center", gap: 4, minWidth: 0, overflow: "hidden" }}>
+    <View style={{ flexDirection: "row", alignItems: "center", gap: 4, minWidth: 0, overflow: "hidden", paddingLeft: inset }}>
       {items.map((item, index) => (
         <Fragment key={index}>
           {index > 0 && index === 1 && branch ? <Text style={styles.detail}>·</Text> : null}
@@ -808,14 +830,16 @@ export function ProjectBlock({
   const project = useProject(reference, (item) => ({ name: item.displayName }));
   const listed = (item: PluginWorkspaceSnapshot) =>
     item.project.key === reference.key && isListed(item, look);
-  const workspaces = useWorkspaces({
-    where: listed,
-    orderBy: look.workspaceSort === "name" ? "name" : compareWorkspaceTimes(look.workspaceSort),
-  });
+  const workspaces = useWorkspaces({ where: listed, orderBy: checkoutsFirst(look.workspaceSort) });
   const rolledUp = (item: PluginWorkspaceSnapshot) =>
     (item.project.key === reference.key || subProjects.includes(item.project.key)) && isListed(item, look);
   const status = useFoldedStatus(collapsed && look.showFoldedStatus ? rolledUp : null);
   const holdsActive = useHoldsActive(view, collapsed ? rolledUp : null);
+  // Worktrees go one step in, under the checkout listed above them, when there is one.
+  const worktreeKeys = useWorkspaces({ where: (item) => listed(item) && item.kind === "worktree" });
+  const worktrees = useMemo(() => new Set(worktreeKeys.map((ref) => ref.key)), [worktreeKeys]);
+  const hasCheckout = workspaces.length > worktrees.size;
+  const step = look.workspaceIndent - look.projectIndent;
   // A sub-project sits where its parent's workspaces start.
   const shift = nested ? look.workspaceIndent - look.projectIndent : 0;
   const name = project?.name ?? reference.id;
@@ -926,7 +950,12 @@ export function ProjectBlock({
       </View>
       {collapsed
         ? null
-        : workspaces.map((workspace) => renderWorkspace(workspace, look.workspaceIndent + shift))}
+        : workspaces.map((workspace) =>
+            renderWorkspace(
+              workspace,
+              look.workspaceIndent + shift + (hasCheckout && worktrees.has(workspace.key) ? step : 0),
+            ),
+          )}
       {collapsed ? null : children}
     </View>
   );

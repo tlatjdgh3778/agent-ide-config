@@ -36,7 +36,7 @@ function loadClient(file, host = {}) {
       Pressable: "Pressable",
       TextInput: "NativeInput",
     },
-    "@getpaseo/plugin/client": host,
+    "@getpaseo/plugin/client": { useAgents: () => [], ...host },
     "@getpaseo/plugin/client/ui": {
       Icon: "Icon",
       TextInput: "SheetAwareInput",
@@ -44,11 +44,12 @@ function loadClient(file, host = {}) {
       useToast: () => ({ show: noop, error: noop }),
     },
     "./i18n": { useT: () => (key) => key },
-    "./model": { mostUrgent: () => "done", compareWorkspaceTimes: () => () => 0, compactTimeAgo: () => "" },
+    "./model": { mostUrgent: () => "done", compareWorkspaceTimes: () => () => 0, checkoutsFirst: () => () => 0, compactTimeAgo: () => "" },
     "./project-icon": { ProjectIcon: "ProjectIcon" },
     "./running-spinner": { RunningSpinner: "RunningSpinner" },
     "./labels": { LabelChip: "LabelChip", labelKey: (name) => name.toLowerCase(), useLabelCatalog: () => ({ labels: null, refresh() {} }) },
     "./look": { useLook: () => ({ icon: 13, text: 12, line: 16, small: 11 }) },
+    "../shared/branch": { branchProblem: () => null },
     "../shared/rpc": { markWorkspaceRpc: {} },
     "./drag": {
       useDrag: () => ({ recentlyDropped: () => false }),
