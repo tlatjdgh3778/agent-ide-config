@@ -25,6 +25,13 @@ export type Dialog =
       /** Why the name can't be used, or null. */
       problem: (name: string) => string | null;
       submit: (name: string) => void;
+    }
+  | {
+      kind: "confirm";
+      title: string;
+      message: string;
+      confirmLabel: string;
+      confirm: () => void;
     };
 
 export function DialogHost({
@@ -55,6 +62,7 @@ export function DialogHost({
         {dialog?.kind === "name" ? (
           <NameForm key={dialog.title} dialog={dialog} close={close} theme={theme} />
         ) : null}
+        {dialog?.kind === "confirm" ? <Confirm dialog={dialog} close={close} theme={theme} /> : null}
       </Modal.Content>
     </Modal>
     </FontContext.Provider>
@@ -175,6 +183,48 @@ function NameForm({
           }}
         >
           <Text style={[font, { fontSize: 13, color: theme.colors.accentForeground }]}>저장</Text>
+        </Pressable>
+      </View>
+    </View>
+  );
+}
+
+/** A yes/no for something that can't be undone; the danger button says what happens. */
+function Confirm({
+  dialog,
+  close,
+  theme,
+}: {
+  dialog: Extract<Dialog, { kind: "confirm" }>;
+  close: () => void;
+  theme: PluginTheme;
+}) {
+  const font = useFont();
+  return (
+    <View style={{ gap: 12 }}>
+      <Text style={[font, { fontSize: 13, lineHeight: 19, color: theme.colors.foreground }]}>
+        {dialog.message}
+      </Text>
+      <View style={{ flexDirection: "row", justifyContent: "flex-end", gap: 8 }}>
+        <Pressable accessibilityRole="button" onPress={close} style={{ padding: 8 }}>
+          <Text style={[font, { fontSize: 13, color: theme.colors.foregroundMuted }]}>취소</Text>
+        </Pressable>
+        <Pressable
+          accessibilityRole="button"
+          onPress={() => {
+            close();
+            dialog.confirm();
+          }}
+          style={{
+            paddingVertical: 8,
+            paddingHorizontal: 12,
+            borderRadius: 6,
+            backgroundColor: theme.colors.statusDanger,
+          }}
+        >
+          <Text style={[font, { fontSize: 13, color: theme.colors.accentForeground }]}>
+            {dialog.confirmLabel}
+          </Text>
         </Pressable>
       </View>
     </View>

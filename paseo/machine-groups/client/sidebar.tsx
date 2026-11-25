@@ -1,14 +1,24 @@
-import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from "react";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import { Pressable, Text, View, type TextStyle } from "react-native";
 import {
   useHosts,
+  usePaseo,
   useWorkspace,
   useWorkspaces,
   type PluginHostSummary,
   type PluginSidebarViewProps,
   type WorkspaceRef,
 } from "@getpaseo/plugin/client";
-import { Icon, ScrollView } from "@getpaseo/plugin/client/ui";
+import { Icon, ScrollView, useToast } from "@getpaseo/plugin/client/ui";
 import type { PluginTheme, WorkspaceIndicator } from "@getpaseo/plugin";
 import {
   addGroup,
@@ -21,6 +31,7 @@ import {
   renameGroup,
   type Machine,
 } from "../shared/groups";
+import { nestWorktrees, type Entry } from "../shared/tree";
 import { DialogHost, type Action, type Dialog } from "./dialogs";
 import { useAppFont } from "./font";
 import { useCollapsed, useGroups, type Change } from "./use-groups";
@@ -48,6 +59,39 @@ const FontContext = createContext<string | undefined>(undefined);
 function T({ style, ...props }: React.ComponentProps<typeof Text> & { style?: TextStyle }) {
   const fontFamily = useContext(FontContext);
   return <Text {...props} style={[fontFamily ? { fontFamily } : null, style]} />;
+}
+
+/**
+ * Hover for a row that holds buttons. Moving onto a button inside counts as leaving the
+ * row, which would hide the button under the pointer, so leaving waits a moment and the
+ * button's own hover-in cancels it.
+ */
+interface Hover {
+  hovered: boolean;
+  enter: () => void;
+  leave: () => void;
+}
+
+function useRowHover(): Hover {
+  const [hovered, setHovered] = useState(false);
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const clear = useCallback(() => {
+    if (timer.current) clearTimeout(timer.current);
+    timer.current = null;
+  }, []);
+  useEffect(() => clear, [clear]);
+  const enter = useCallback(() => {
+    clear();
+    setHovered(true);
+  }, [clear]);
+  const leave = useCallback(() => {
+    clear();
+    timer.current = setTimeout(() => {
+      timer.current = null;
+      setHovered(false);
+    }, 120);
+  }, [clear]);
+  return { hovered, enter, leave };
 }
 
 export function MachineGroups(view: PluginSidebarViewProps) {
@@ -105,15 +149,27 @@ function MachineSection({
   const folded = ctx.collapsed.includes(key);
   const online = host.status === "online";
   const refs = useWorkspaces({ hosts: [host.serverId], orderBy: "name" });
+  // Which project each workspace is in and whether it is a worktree, so worktrees can
+  // sit under their checkout. Grouping by both keeps the subscription to these fields.
+  const kinds = useWorkspaces({
+    hosts: [host.serverId],
+    groupBy: (w) => JSON.stringify([w.projectId, w.kind === "worktree"]),
+  });
   const groups = ctx.groupsBroken ? [] : machine.groups;
   const members = useMemo(() => {
-    const byGroup = new Map<string | null, WorkspaceRef[]>();
+    const info = new Map<string, { project: string; worktree: boolean }>();
+    for (const group of kinds) {
+      const [project, worktree] = JSON.parse(group.key) as [string, boolean];
+      for (const ref of group.items) info.set(ref.key, { project, worktree });
+    }
+    const byGroup = new Map<string | null, Member[]>();
     for (const ref of refs) {
       const group = ctx.groupsBroken ? null : groupOf(machine, ref.id);
-      byGroup.set(group, [...(byGroup.get(group) ?? []), ref]);
+      const known = info.get(ref.key) ?? { project: ref.key, worktree: false };
+      byGroup.set(group, [...(byGroup.get(group) ?? []), { id: ref.key, ref, ...known }]);
     }
     return byGroup;
-  }, [refs, machine, ctx.groupsBroken]);
+  }, [refs, kinds, machine, ctx.groupsBroken]);
 
   const newGroup = useCallback(
     (then?: (groupId: string) => Change) =>
@@ -165,17 +221,14 @@ function MachineSection({
               newGroup={newGroup}
             />
           ))}
-          {(members.get(null) ?? []).map((ref) => (
-            <WorkspaceRow
-              key={ref.key}
-              reference={ref}
-              hostId={host.serverId}
-              machine={machine}
-              ctx={ctx}
-              newGroup={newGroup}
-              indent={0}
-            />
-          ))}
+          <WorkspaceTree
+            members={members.get(null) ?? []}
+            hostId={host.serverId}
+            machine={machine}
+            ctx={ctx}
+            newGroup={newGroup}
+            indent={0}
+          />
           {refs.length === 0 ? <Note theme={ctx.theme}>작업 공간 없음</Note> : null}
         </View>
       )}
@@ -194,7 +247,7 @@ function GroupSection({
   hostId: string;
   group: { id: string; name: string };
   machine: Machine;
-  refs: readonly WorkspaceRef[];
+  refs: readonly Member[];
   ctx: Ctx;
   newGroup: (then?: (groupId: string) => Change) => void;
 }) {
@@ -234,19 +287,16 @@ function GroupSection({
         level="group"
         action={{ icon: "Ellipsis", label: "그룹 메뉴", onPress: menu }}
       />
-      {folded
-        ? null
-        : refs.map((ref) => (
-            <WorkspaceRow
-              key={ref.key}
-              reference={ref}
-              hostId={hostId}
-              machine={machine}
-              ctx={ctx}
-              newGroup={newGroup}
-              indent={1}
-            />
-          ))}
+      {folded ? null : (
+        <WorkspaceTree
+          members={refs}
+          hostId={hostId}
+          machine={machine}
+          ctx={ctx}
+          newGroup={newGroup}
+          indent={1}
+        />
+      )}
     </View>
   );
 }
@@ -270,7 +320,8 @@ function Header({
   action?: { icon: string; label: string; onPress: () => void };
   level: "machine" | "group";
 }) {
-  const [hovered, setHovered] = useState(false);
+  const hover = useRowHover();
+  const { hovered } = hover;
   const { theme } = ctx;
   const machine = level === "machine";
   return (
@@ -278,8 +329,8 @@ function Header({
       accessibilityRole="button"
       accessibilityLabel={`${folded ? "펼치기" : "접기"} ${title}`}
       onPress={onPress}
-      onHoverIn={() => setHovered(true)}
-      onHoverOut={() => setHovered(false)}
+      onHoverIn={hover.enter}
+      onHoverOut={hover.leave}
       style={{
         height: machine ? 30 : ROW_HEIGHT,
         flexDirection: "row",
@@ -331,9 +382,57 @@ function Header({
           visible={hovered || ctx.view.layout.compact}
           onPress={action.onPress}
           theme={theme}
+          row={hover}
         />
       ) : null}
     </Pressable>
+  );
+}
+
+/** A workspace in a list, with what the tree needs to know about it. */
+interface Member extends Entry {
+  readonly ref: WorkspaceRef;
+}
+
+/** Checkouts at `indent`, each followed by its worktrees one step further in. */
+function WorkspaceTree({
+  members,
+  indent,
+  ...row
+}: {
+  members: readonly Member[];
+  hostId: string;
+  machine: Machine;
+  ctx: Ctx;
+  newGroup: (then?: (groupId: string) => Change) => void;
+  indent: number;
+}) {
+  return (
+    <>
+      {nestWorktrees(members).map(({ entry, children }) => {
+        const key = `tree:${row.hostId}:${entry.ref.id}`;
+        const folded = row.ctx.collapsed.includes(key);
+        const fold = children.length
+          ? { folded, count: children.length, toggle: () => row.ctx.toggle(key) }
+          : undefined;
+        return (
+          <View key={entry.id}>
+            <WorkspaceRow
+              {...row}
+              reference={entry.ref}
+              worktree={entry.worktree}
+              indent={indent}
+              fold={fold}
+            />
+            {folded
+              ? null
+              : children.map((child) => (
+                  <WorkspaceRow {...row} key={child.id} reference={child.ref} worktree indent={indent + 1} />
+                ))}
+          </View>
+        );
+      })}
+    </>
   );
 }
 
@@ -344,6 +443,8 @@ function WorkspaceRow({
   ctx,
   newGroup,
   indent,
+  worktree,
+  fold,
 }: {
   reference: WorkspaceRef;
   hostId: string;
@@ -351,9 +452,16 @@ function WorkspaceRow({
   ctx: Ctx;
   newGroup: (then?: (groupId: string) => Change) => void;
   indent: number;
+  /** Shown with a branch mark instead of the project tile. */
+  worktree: boolean;
+  /** Set on a checkout that has worktrees under it. */
+  fold?: Fold;
 }) {
   const workspace = useWorkspace(reference);
-  const [hovered, setHovered] = useState(false);
+  const paseo = usePaseo();
+  const toast = useToast();
+  const hover = useRowHover();
+  const { hovered } = hover;
   const { theme, view } = ctx;
   if (!workspace) return null;
   // A checkout's own name is its branch ("main"), which says little on its own; lead
@@ -378,6 +486,30 @@ function WorkspaceRow({
       label: "새 그룹 만들어 넣기",
       onPress: () => newGroup((id) => (all) => assign(all, hostId, reference.id, id)),
     });
+    if (worktree)
+      actions.push({
+        label: "워크트리 제거",
+        danger: true,
+        onPress: () =>
+          ctx.open({
+            kind: "confirm",
+            title: `워크트리 제거 · ${name}`,
+            message: removalMessage(workspace),
+            confirmLabel: "제거",
+            confirm: () => {
+              void paseo.workspaces
+                .ref(reference)
+                .archive()
+                .then(
+                  (result) => {
+                    if (result.error) toast.error(`제거하지 못했습니다: ${result.error}`);
+                  },
+                  (error: unknown) =>
+                    toast.error(`제거하지 못했습니다: ${error instanceof Error ? error.message : String(error)}`),
+                );
+            },
+          }),
+      });
     ctx.open({ kind: "actions", title: name, actions });
   };
   const dot = indicatorColor(theme, workspace.indicator);
@@ -386,8 +518,8 @@ function WorkspaceRow({
       accessibilityRole="button"
       accessibilityLabel={`열기 ${name}`}
       onPress={() => view.navigation.openWorkspace(reference)}
-      onHoverIn={() => setHovered(true)}
-      onHoverOut={() => setHovered(false)}
+      onHoverIn={hover.enter}
+      onHoverOut={hover.leave}
       style={{
         height: ROW_HEIGHT,
         flexDirection: "row",
@@ -400,7 +532,13 @@ function WorkspaceRow({
         backgroundColor: active ? theme.colors.surface2 : hovered ? theme.colors.surface1 : undefined,
       }}
     >
-      <Avatar name={workspace.projectDisplayName} theme={theme} />
+      {worktree ? (
+        <View accessibilityLabel="워크트리" style={{ width: AVATAR, alignItems: "center" }}>
+          <Icon name="GitBranch" size={14} color={theme.colors.foregroundMuted} />
+        </View>
+      ) : (
+        <Avatar name={workspace.projectDisplayName} theme={theme} />
+      )}
       <View style={{ flex: 1, minWidth: 0, flexDirection: "row", alignItems: "baseline", gap: 6 }}>
         {/* The branch gives way first; the name only truncates once the branch is gone. */}
         <T
@@ -425,8 +563,10 @@ function WorkspaceRow({
           visible={hovered || view.layout.compact}
           onPress={menu}
           theme={theme}
+          row={hover}
         />
       )}
+      {fold ? <FoldButton fold={fold} theme={theme} row={hover} /> : null}
       {dot ? (
         <View
           accessibilityLabel={workspace.indicatorLabel ?? workspace.indicator}
@@ -484,12 +624,15 @@ function IconButton({
   visible,
   onPress,
   theme,
+  row,
 }: {
   icon: string;
   label: string;
   visible: boolean;
   onPress: () => void;
   theme: PluginTheme;
+  /** The row it sits in, kept hovered while the pointer is on the button. */
+  row?: Hover;
 }) {
   const [hovered, setHovered] = useState(false);
   // Hidden buttons take no room, so a narrow sidebar spends it on the name.
@@ -502,8 +645,14 @@ function IconButton({
         event.stopPropagation?.();
         onPress();
       }}
-      onHoverIn={() => setHovered(true)}
-      onHoverOut={() => setHovered(false)}
+      onHoverIn={() => {
+        row?.enter();
+        setHovered(true);
+      }}
+      onHoverOut={() => {
+        row?.leave();
+        setHovered(false);
+      }}
       style={{
         width: 22,
         height: 22,
@@ -543,4 +692,64 @@ function Note({
       {children}
     </T>
   );
+}
+
+interface Fold {
+  folded: boolean;
+  /** How many worktrees are under the checkout. */
+  count: number;
+  toggle: () => void;
+}
+
+/** Folds a checkout's worktrees. Always shown, so a checkout with worktrees says so. */
+function FoldButton({ fold, theme, row }: { fold: Fold; theme: PluginTheme; row: Hover }) {
+  const [hovered, setHovered] = useState(false);
+  const color = hovered ? theme.colors.foreground : theme.colors.foregroundMuted;
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={`워크트리 ${fold.count}개 ${fold.folded ? "펼치기" : "접기"}`}
+      onPress={(event) => {
+        event.stopPropagation?.();
+        fold.toggle();
+      }}
+      onHoverIn={() => {
+        row.enter();
+        setHovered(true);
+      }}
+      onHoverOut={() => {
+        row.leave();
+        setHovered(false);
+      }}
+      style={{
+        height: 22,
+        paddingHorizontal: 4,
+        borderRadius: 5,
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 2,
+        backgroundColor: hovered ? theme.colors.surface2 : undefined,
+      }}
+    >
+      {fold.folded ? <T style={{ fontSize: SMALL, color }}>{fold.count}</T> : null}
+      <Icon name={fold.folded ? "ChevronRight" : "ChevronDown"} size={13} color={color} />
+    </Pressable>
+  );
+}
+
+/** What removing a worktree takes with it, said before it happens. */
+function removalMessage(workspace: {
+  directory: string;
+  branch: string | null;
+  diffStat: { additions: number; deletions: number } | null;
+}): string {
+  const lines = [
+    `작업 공간을 보관하고 워크트리 폴더 ${workspace.directory} 를 지웁니다. 이 워크트리를 가리키는 다른 작업 공간이 있으면 폴더는 남습니다.`,
+  ];
+  // Paseo removes with `git worktree remove --force`: nothing stops on a dirty tree.
+  const diff = workspace.diffStat;
+  const changes = diff && (diff.additions || diff.deletions) ? `(+${diff.additions} −${diff.deletions}) ` : "";
+  lines.push(`커밋하지 않은 변경 ${changes}과 추적하지 않는 파일도 확인 없이 함께 지워집니다.`);
+  if (workspace.branch) lines.push(`브랜치 ${workspace.branch} 는 저장소에 남습니다.`);
+  return lines.join("\n\n");
 }
