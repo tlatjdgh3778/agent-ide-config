@@ -1,5 +1,5 @@
 import type { PluginAgentSnapshot, PluginWorkspaceSnapshot } from "@getpaseo/plugin";
-import type { AgentRef } from "@getpaseo/plugin/client";
+import type { AgentRef, WorkspaceRef } from "@getpaseo/plugin/client";
 
 export const statusLabels = {
   needs: "입력 필요",
@@ -67,6 +67,27 @@ export function compareWorkspaces(left: PluginWorkspaceSnapshot, right: PluginWo
     left.project.key.localeCompare(right.project.key);
   const state = priority[workspaceState(left) ?? "idle"] - priority[workspaceState(right) ?? "idle"];
   return project || state || (left.title ?? left.name).localeCompare(right.title ?? right.name);
+}
+
+export interface WorkspaceFamily {
+  checkout: WorkspaceRef;
+  worktrees: readonly WorkspaceRef[];
+}
+
+export function workspaceFamilies(
+  projects: readonly { key: string; items: readonly WorkspaceRef[] }[],
+  localCheckouts: ReadonlySet<string>,
+  worktreeKeys: ReadonlySet<string>,
+) {
+  const byProject = new Map<string, WorkspaceFamily>();
+  for (const project of projects) {
+    const checkouts = project.items.filter(ref => localCheckouts.has(ref.key));
+    const worktrees = project.items.filter(ref => worktreeKeys.has(ref.key));
+    if (checkouts.length === 1 && worktrees.length) {
+      byProject.set(project.key, { checkout: checkouts[0], worktrees });
+    }
+  }
+  return byProject;
 }
 
 export function providerName(provider: string) {

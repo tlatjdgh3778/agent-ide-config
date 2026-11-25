@@ -16,6 +16,7 @@ import {
   type AgentNode,
   type AgentState,
   type Filter,
+  type WorkspaceFamily,
   agentState,
   agentStateLabel,
   buildTree,
@@ -23,6 +24,7 @@ import {
   compareWorkspaces,
   providerName,
   statusLabels,
+  workspaceFamilies,
   workspaceState,
 } from "./state";
 
@@ -44,6 +46,9 @@ const statusTones = {
 };
 const kinds = {
   worktree: "워크트리", directory: "폴더", checkout: "체크아웃", local_checkout: "원본 체크아웃",
+};
+const kindIcons = {
+  worktree: "GitBranch", directory: "Folder", checkout: "GitCommitHorizontal", local_checkout: "GitCommitHorizontal",
 };
 const agentWorkspaceKey = (key: string) => `workspace:${key}`;
 const withinWorkspaceKey = (key: string, state: AgentState) => `within:${state}:${key}`;
@@ -83,6 +88,14 @@ function HostBoard({ host, layout, navigation, theme }: PluginScreenProps) {
     where: workspace => !workspace.background && !workspace.archivingAt && workspace.kind === "worktree",
   });
   const worktreeKeys = useMemo(() => new Set(worktreeRefs.map(ref => ref.key)), [worktreeRefs]);
+  const localCheckouts = useWorkspaces({
+    hosts: [host.id],
+    where: workspace => !workspace.background && !workspace.archivingAt && workspace.kind === "local_checkout",
+  });
+  const families = useMemo(
+    () => workspaceFamilies(allProjects, new Set(localCheckouts.map(ref => ref.key)), worktreeKeys),
+    [allProjects, localCheckouts, worktreeKeys],
+  );
   const selectedProject = allProjects.find(project => project.key === projectKey);
   const projectTabs = useMemo(() => allProjects.map(project => ({
     key: project.key,
@@ -143,7 +156,12 @@ function HostBoard({ host, layout, navigation, theme }: PluginScreenProps) {
   const agentTotal = filters.reduce((count, key) =>
     key === "all" ? count : count + (agents.get(stateKey(key))?.length ?? 0), 0);
   const wide = !layout.compact && width >= 800;
-  const twoColumns = width >= 540;
+  const twoColumns = width >= (wide ? 950 : 540);
+  const detailProject = shownProjects.find(project => project.items.some(ref => ref.key === selected?.key));
+  const selectedFamily = detailProject && families.get(detailProject.key);
+  const selectedIsCheckout = selectedFamily?.checkout.key === selected?.key;
+  const related = !selectedFamily ? [] : selectedIsCheckout ? selectedFamily.worktrees :
+    selectedFamily.worktrees.some(ref => ref.key === selected?.key) ? [selectedFamily.checkout] : [];
   const detail = selected && (
     <Inspector
       reference={selected}
@@ -151,8 +169,46 @@ function HostBoard({ host, layout, navigation, theme }: PluginScreenProps) {
       terminalQuestion={terminalQuestions.has(selected.id)}
       visual={visual}
       navigation={navigation}
+      related={related}
+      relatedKind={selectedIsCheckout ? "worktree" : "local_checkout"}
+      selectRelated={ref => {
+        if (!visibleWorkspaces.some(workspace => workspace.key === ref.key)) {
+          setFilter("all");
+          if (!worktreeKeys.has(ref.key)) setOnlyWorktrees(false);
+        }
+        setSelectedKey(ref.key);
+      }}
     />
   );
+
+  function renderRows(items: readonly WorkspaceRef[], family?: WorkspaceFamily, single = false) {
+    const columns = twoColumns && !single ? 2 : 1;
+    return Array.from({ length: Math.ceil(items.length / columns) }, (_, index) => {
+      const row = items.slice(index * columns, (index + 1) * columns);
+      return (
+        <View key={row[0].key} style={styles.tileGroup}>
+          <View style={styles.tileRow}>
+            {row.map(reference => (
+              <WorkspaceCard
+                key={reference.key}
+                reference={reference}
+                checkout={family && worktreeKeys.has(reference.key) ? family.checkout : undefined}
+                worktreeCount={family?.checkout.key === reference.key ? family.worktrees.length : 0}
+                agents={agents.get(agentWorkspaceKey(reference.key)) ?? noAgents}
+                agentGroups={agents}
+                terminalQuestion={terminalQuestions.has(reference.id)}
+                selected={selected?.key === reference.key}
+                onSelect={() => setSelectedKey(reference.key)}
+                visual={visual}
+              />
+            ))}
+            {columns === 2 && row.length === 1 && <View style={styles.column} aria-hidden />}
+          </View>
+          {!wide && row.some(ref => ref.key === selected?.key) && detail}
+        </View>
+      );
+    });
+  }
 
   return (
     <View style={[styles.page, { backgroundColor: colors.surface0 }]}
@@ -263,42 +319,33 @@ function HostBoard({ host, layout, navigation, theme }: PluginScreenProps) {
                     onlyWorktrees ? "이 범위에 열린 워크트리가 없습니다." : "이 호스트에 열린 작업 공간이 없습니다."}
                 </Text>
               )}
-              {shownProjects.map(project => (
-                <View key={project.key} style={styles.project}>
-                  <View style={styles.projectHeader}>
-                    <Text accessibilityRole="header" style={[styles.projectTitle, { color: colors.foreground }]}>
-                      {project.title}
-                    </Text>
-                    <Text style={[styles.small, { color: colors.foregroundMuted }]}>
-                      {project.items.length}개 {onlyWorktrees ? "워크트리" : "작업 공간"}
-                    </Text>
-                  </View>
-                  {Array.from({ length: Math.ceil(project.items.length / (twoColumns ? 2 : 1)) }, (_, index) => {
-                    const columns = twoColumns ? 2 : 1;
-                    const row = project.items.slice(index * columns, (index + 1) * columns);
-                    return (
-                      <View key={row[0].key} style={styles.tileGroup}>
-                        <View style={styles.tileRow}>
-                          {row.map(reference => (
-                            <WorkspaceCard
-                              key={reference.key}
-                              reference={reference}
-                              agents={agents.get(agentWorkspaceKey(reference.key)) ?? noAgents}
-                              agentGroups={agents}
-                              terminalQuestion={terminalQuestions.has(reference.id)}
-                              selected={selected?.key === reference.key}
-                              onSelect={() => setSelectedKey(reference.key)}
-                              visual={visual}
-                            />
-                          ))}
-                          {twoColumns && row.length === 1 && <View style={styles.column} aria-hidden />}
+              {shownProjects.map(project => {
+                const family = families.get(project.key);
+                const worktrees = project.items.filter(ref => worktreeKeys.has(ref.key));
+                const grouped = family && worktrees.length > 0 &&
+                  project.items.some(ref => ref.key === family.checkout.key);
+                return (
+                  <View key={project.key} style={styles.project}>
+                    <View style={styles.projectHeader}>
+                      <Text accessibilityRole="header" style={[styles.projectTitle, { color: colors.foreground }]}>
+                        {project.title}
+                      </Text>
+                      <Text style={[styles.small, { color: colors.foregroundMuted }]}>
+                        {project.items.length}개 {onlyWorktrees ? "워크트리" : "작업 공간"}
+                      </Text>
+                    </View>
+                    {grouped ? (
+                      <View style={styles.tileGroup}>
+                        {renderRows([family.checkout], family, true)}
+                        <View style={[styles.worktreeGroup, { borderStartColor: colors.border }]}>
+                          {renderRows(worktrees, family, worktrees.length === 1)}
                         </View>
-                        {!wide && row.some(ref => ref.key === selected?.key) && detail}
+                        {renderRows(project.items.filter(ref => ref.key !== family.checkout.key && !worktreeKeys.has(ref.key)))}
                       </View>
-                    );
-                  })}
-                </View>
-              ))}
+                    ) : renderRows(project.items, family)}
+                  </View>
+                );
+              })}
             </View>
             {wide && detail && <View style={styles.side}>{detail}</View>}
           </View>
@@ -312,8 +359,10 @@ function Cat({ state, visual, scale }: { state: AgentState; visual: Visual; scal
   return <CatSprite state={state} mode={visual.mode} markColor={visual.tones[state]} scale={scale} />;
 }
 
-function WorkspaceCard({ reference, agents, agentGroups, terminalQuestion, selected, onSelect, visual }: {
+function WorkspaceCard({ reference, checkout, worktreeCount, agents, agentGroups, terminalQuestion, selected, onSelect, visual }: {
   reference: WorkspaceRef;
+  checkout?: WorkspaceRef;
+  worktreeCount: number;
   agents: readonly AgentRef[];
   agentGroups: ReadonlyMap<string, readonly AgentRef[]>;
   terminalQuestion: boolean;
@@ -322,6 +371,7 @@ function WorkspaceCard({ reference, agents, agentGroups, terminalQuestion, selec
   visual: Visual;
 }) {
   const workspace = useWorkspace(reference);
+  const checkoutName = useWorkspace(checkout ?? reference, item => item.title ?? item.name);
   if (!workspace) return <View style={styles.column} aria-hidden />;
   const { colors } = visual;
   const title = workspace.title ?? workspace.name;
@@ -335,12 +385,13 @@ function WorkspaceCard({ reference, agents, agentGroups, terminalQuestion, selec
   });
   if (terminalQuestion) statusSummary.push("Codex 터미널 입력 필요");
   if (showWorkspaceState) statusSummary.push(`작업 공간 ${statusLabels[state]}`);
-  const branch = workspace.kind === "worktree" ? workspace.branch ?? kinds.worktree :
-    [kinds[workspace.kind], workspace.branch].filter(Boolean).join(" · ");
+  const branch = [kinds[workspace.kind], workspace.branch].filter(Boolean).join(" · ");
+  const relation = checkout && checkoutName ? `원본 체크아웃 · ${checkoutName}` :
+    worktreeCount > 0 ? `연결된 워크트리 ${worktreeCount}개` : null;
   return (
     <Pressable
       accessibilityRole="button"
-      accessibilityLabel={[`${title}, ${branch}, 에이전트 ${agents.length}개`, ...statusSummary].join(", ")}
+      accessibilityLabel={[`${title}, ${branch}, 에이전트 ${agents.length}개`, relation, ...statusSummary].filter(Boolean).join(", ")}
       accessibilityState={{ selected }}
       onPress={onSelect}
       style={({ pressed }) => [styles.tile, {
@@ -350,11 +401,12 @@ function WorkspaceCard({ reference, agents, agentGroups, terminalQuestion, selec
     >
       <View style={styles.tileHeader}>
         <View style={[styles.branchIcon, { backgroundColor: colors.surface2 }]}>
-          <Icon name={workspace.kind === "directory" ? "Folder" : "GitBranch"} color={colors.accent} size={14} />
+          <Icon name={kindIcons[workspace.kind]} color={colors.accent} size={14} />
         </View>
         <View style={styles.tileText}>
           <Text style={[styles.tileTitle, { color: colors.foreground }]}>{title}</Text>
           <Text style={[styles.branch, { color: colors.foregroundMuted }]}>{branch}</Text>
+          {relation && <Text style={[styles.small, { color: colors.foregroundMuted }]}>{relation}</Text>}
         </View>
         <Text style={[styles.small, { color: colors.foregroundMuted }]}>{agents.length}개</Text>
       </View>
@@ -395,12 +447,15 @@ function AgentLine({ reference, visual }: { reference: AgentRef; visual: Visual 
   );
 }
 
-function Inspector({ reference, agents, terminalQuestion, navigation, visual }: {
+function Inspector({ reference, agents, terminalQuestion, navigation, visual, related, relatedKind, selectRelated }: {
   reference: WorkspaceRef;
   agents: readonly AgentRef[];
   terminalQuestion: boolean;
   navigation: Navigation;
   visual: Visual;
+  related: readonly WorkspaceRef[];
+  relatedKind: "worktree" | "local_checkout";
+  selectRelated(ref: WorkspaceRef): void;
 }) {
   const { colors } = visual;
   const workspace = useWorkspace(reference);
@@ -414,7 +469,7 @@ function Inspector({ reference, agents, terminalQuestion, navigation, visual }: 
   if (!workspace) return null;
 
   return (
-    <View accessibilityLabel="선택한 워크트리 상세" style={[styles.inspector, {
+    <View accessibilityLabel="선택한 작업 공간 상세" style={[styles.inspector, {
       borderColor: colors.border,
       backgroundColor: colors.surface1,
     }]}>
@@ -423,16 +478,29 @@ function Inspector({ reference, agents, terminalQuestion, navigation, visual }: 
         <Text accessibilityRole="header" style={[styles.inspectorTitle, { color: colors.foreground }]}>
           {workspace.title ?? workspace.name}
         </Text>
-        <Text style={[styles.branch, { color: colors.foregroundMuted }]}>{workspace.branch ?? kinds[workspace.kind]}</Text>
+        <Text style={[styles.branch, { color: colors.foregroundMuted }]}>
+          {[kinds[workspace.kind], workspace.branch].filter(Boolean).join(" · ")}
+        </Text>
       </View>
       <View style={styles.inspectorBody}>
+        {related.length > 0 && (
+          <View style={styles.related}>
+            <Text accessibilityRole="header" style={[styles.sectionTitle, { color: colors.foreground }]}>
+              {relatedKind === "worktree" ? "연결된 워크트리" : kinds.local_checkout}
+            </Text>
+            {related.map(ref => (
+              <RelatedWorkspace key={ref.key} reference={ref} kind={relatedKind}
+                select={selectRelated} visual={visual} />
+            ))}
+          </View>
+        )}
         {terminalQuestion && (
           <Text style={[styles.caption, { color: visual.tones.needs }]}>Codex 터미널에서 응답을 기다리고 있습니다.</Text>
         )}
         <Text accessibilityRole="header" style={[styles.sectionTitle, { color: colors.foreground }]}>에이전트 관계</Text>
         {tree.length ? tree.map(node => (
           <TreeNode key={node.ref.key} node={node} navigation={navigation} visual={visual} />
-        )) : <Text style={[styles.caption, { color: colors.foregroundMuted }]}>연결된 에이전트가 없습니다.</Text>}
+        )) : <Text style={[styles.caption, { color: colors.foregroundMuted }]}>이 작업 공간에 에이전트가 없습니다.</Text>}
         {navigation && (
           <Pressable
             accessibilityRole="button"
@@ -448,6 +516,35 @@ function Inspector({ reference, agents, terminalQuestion, navigation, visual }: 
         )}
       </View>
     </View>
+  );
+}
+
+function RelatedWorkspace({ reference, kind, select, visual }: {
+  reference: WorkspaceRef;
+  kind: "worktree" | "local_checkout";
+  select(ref: WorkspaceRef): void;
+  visual: Visual;
+}) {
+  const workspace = useWorkspace(reference);
+  if (!workspace) return null;
+  const { colors } = visual;
+  const title = workspace.title ?? workspace.name;
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={`보드에서 ${title} 선택`}
+      onPress={() => select(reference)}
+      style={({ pressed }) => [styles.relatedRow, {
+        borderColor: colors.border,
+        backgroundColor: pressed ? colors.surface2 : colors.surface1,
+      }]}
+    >
+      <Icon name={kindIcons[kind]} size={14} color={colors.accent} />
+      <View style={styles.tileText}>
+        <Text style={[styles.caption, { color: colors.foreground }]}>{title}</Text>
+        {workspace.branch && <Text style={[styles.branch, { color: colors.foregroundMuted }]}>{workspace.branch}</Text>}
+      </View>
+    </Pressable>
   );
 }
 
@@ -527,6 +624,7 @@ const styles = StyleSheet.create({
   projectHeader: { flexDirection: "row", alignItems: "baseline", flexWrap: "wrap", gap: 8 },
   projectTitle: { fontSize: 13, lineHeight: 19, fontWeight: "600", fontFamily: mono },
   tileGroup: { gap: 8 },
+  worktreeGroup: { marginStart: 16, paddingStart: 12, borderStartWidth: 1, gap: 8 },
   tileRow: { flexDirection: "row", gap: 9, alignItems: "stretch" },
   column: { flex: 1, minWidth: 0 },
   tile: { flex: 1, minWidth: 0, borderWidth: 1, borderRadius: 8, padding: 13 },
@@ -543,6 +641,11 @@ const styles = StyleSheet.create({
   inspectorTop: { padding: 13, gap: 4 },
   inspectorTitle: { fontSize: 15, fontWeight: "600", lineHeight: 20 },
   inspectorBody: { padding: 13, gap: 5 },
+  related: { gap: 5, marginBottom: 11 },
+  relatedRow: {
+    minHeight: 44, flexDirection: "row", alignItems: "center", gap: 8,
+    borderWidth: 1, borderRadius: 6, paddingHorizontal: 8, paddingVertical: 5,
+  },
   sectionTitle: { fontSize: 12, fontWeight: "600", marginBottom: 3 },
   treeRow: { flexDirection: "row", alignItems: "center", gap: 7, paddingVertical: 4, borderRadius: 5 },
   treeTitle: { fontSize: 12, lineHeight: 17, fontWeight: "600" },
