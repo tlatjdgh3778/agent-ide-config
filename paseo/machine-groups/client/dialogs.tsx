@@ -32,6 +32,14 @@ export type Dialog =
       message: string;
       confirmLabel: string;
       confirm: () => void;
+    }
+  | {
+      kind: "worktree";
+      title: string;
+      /** Prefilled base: the checkout's branch, when it has one. */
+      base: string;
+      problem: (branch: string) => string | null;
+      submit: (branch: string, base: string) => void;
     };
 
 export function DialogHost({
@@ -63,6 +71,9 @@ export function DialogHost({
           <NameForm key={dialog.title} dialog={dialog} close={close} theme={theme} />
         ) : null}
         {dialog?.kind === "confirm" ? <Confirm dialog={dialog} close={close} theme={theme} /> : null}
+        {dialog?.kind === "worktree" ? (
+          <WorktreeForm key={dialog.title} dialog={dialog} close={close} theme={theme} />
+        ) : null}
       </Modal.Content>
     </Modal>
     </FontContext.Provider>
@@ -225,6 +236,87 @@ function Confirm({
           <Text style={[font, { fontSize: 13, color: theme.colors.accentForeground }]}>
             {dialog.confirmLabel}
           </Text>
+        </Pressable>
+      </View>
+    </View>
+  );
+}
+
+/** A new branch for a worktree, and the branch it starts from. */
+function WorktreeForm({
+  dialog,
+  close,
+  theme,
+}: {
+  dialog: Extract<Dialog, { kind: "worktree" }>;
+  close: () => void;
+  theme: PluginTheme;
+}) {
+  const [branch, setBranch] = useState("");
+  const [base, setBase] = useState(dialog.base);
+  const [touched, setTouched] = useState(false);
+  const font = useFont();
+  const problem = dialog.problem(branch);
+  const submit = () => {
+    setTouched(true);
+    if (problem) return;
+    close();
+    dialog.submit(branch.trim(), base.trim());
+  };
+  const input = {
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    borderRadius: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    fontSize: 13,
+    color: theme.colors.foreground,
+  };
+  const label = [font, { fontSize: 12, color: theme.colors.foregroundMuted }];
+  return (
+    <View style={{ gap: 8 }}>
+      <Text style={label}>새 브랜치</Text>
+      <TextInput
+        autoFocus
+        value={branch}
+        placeholder="feature/이름"
+        placeholderTextColor={theme.colors.foregroundMuted}
+        onChangeText={(text) => {
+          setBranch(text);
+          setTouched(true);
+        }}
+        onSubmitEditing={submit}
+        style={[font, input]}
+      />
+      {touched && problem ? (
+        <Text style={[font, { fontSize: 12, color: theme.colors.statusDanger }]}>{problem}</Text>
+      ) : null}
+      <Text style={label}>기준 브랜치 (비우면 저장소 기본 브랜치)</Text>
+      <TextInput
+        value={base}
+        placeholder="origin/develop"
+        placeholderTextColor={theme.colors.foregroundMuted}
+        onChangeText={setBase}
+        onSubmitEditing={submit}
+        style={[font, input]}
+      />
+      <View style={{ flexDirection: "row", justifyContent: "flex-end", gap: 8 }}>
+        <Pressable accessibilityRole="button" onPress={close} style={{ padding: 8 }}>
+          <Text style={[font, { fontSize: 13, color: theme.colors.foregroundMuted }]}>취소</Text>
+        </Pressable>
+        <Pressable
+          accessibilityRole="button"
+          onPress={submit}
+          disabled={touched && !!problem}
+          style={{
+            paddingVertical: 8,
+            paddingHorizontal: 12,
+            borderRadius: 6,
+            backgroundColor: theme.colors.accent,
+            opacity: touched && problem ? 0.5 : 1,
+          }}
+        >
+          <Text style={[font, { fontSize: 13, color: theme.colors.accentForeground }]}>만들기</Text>
         </Pressable>
       </View>
     </View>

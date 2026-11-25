@@ -31,6 +31,7 @@ import {
   renameGroup,
   type Machine,
 } from "../shared/groups";
+import { branchProblem } from "../shared/branch";
 import { nestWorktrees, type Entry } from "../shared/tree";
 import { DialogHost, type Action, type Dialog } from "./dialogs";
 import { useAppFont } from "./font";
@@ -486,6 +487,38 @@ function WorkspaceRow({
       label: "새 그룹 만들어 넣기",
       onPress: () => newGroup((id) => (all) => assign(all, hostId, reference.id, id)),
     });
+    if (!worktree && workspace.projectKind === "git")
+      actions.push({
+        label: "새 워크트리",
+        onPress: () =>
+          ctx.open({
+            kind: "worktree",
+            title: `새 워크트리 · ${name}`,
+            base: workspace.branch ?? "",
+            problem: branchProblem,
+            submit: (branchName, baseBranch) => {
+              const fail = (error: unknown) =>
+                toast.error(`워크트리를 만들지 못했습니다: ${error instanceof Error ? error.message : String(error)}`);
+              void paseo.projects
+                .ref(workspace.project)
+                .createWorkspace({
+                  title: branchName,
+                  source: {
+                    kind: "worktree",
+                    cwd: workspace.directory,
+                    projectId: workspace.projectId,
+                    action: "branch-off",
+                    branchName,
+                    ...(baseBranch ? { baseBranch } : {}),
+                  },
+                })
+                .then((created) => {
+                  // Keep the new worktree in the checkout's group so it shows up under it.
+                  if (current) ctx.change((all) => assign(all, hostId, created.id, current));
+                }, fail);
+            },
+          }),
+      });
     if (worktree)
       actions.push({
         label: "워크트리 제거",
@@ -556,6 +589,7 @@ function WorkspaceRow({
           </T>
         ) : null}
       </View>
+      {worktree ? <DiffStat diff={workspace.diffStat} theme={theme} /> : null}
       {ctx.groupsBroken ? null : (
         <IconButton
           icon="Ellipsis"
@@ -738,18 +772,46 @@ function FoldButton({ fold, theme, row }: { fold: Fold; theme: PluginTheme; row:
 }
 
 /** What removing a worktree takes with it, said before it happens. */
-function removalMessage(workspace: {
-  directory: string;
-  branch: string | null;
-  diffStat: { additions: number; deletions: number } | null;
-}): string {
+function removalMessage(workspace: { directory: string; branch: string | null }): string {
   const lines = [
     `작업 공간을 보관하고 워크트리 폴더 ${workspace.directory} 를 지웁니다. 이 워크트리를 가리키는 다른 작업 공간이 있으면 폴더는 남습니다.`,
   ];
   // Paseo removes with `git worktree remove --force`: nothing stops on a dirty tree.
-  const diff = workspace.diffStat;
-  const changes = diff && (diff.additions || diff.deletions) ? `(+${diff.additions} −${diff.deletions}) ` : "";
-  lines.push(`커밋하지 않은 변경 ${changes}과 추적하지 않는 파일도 확인 없이 함께 지워집니다.`);
+  lines.push("커밋하지 않은 변경과 추적하지 않는 파일도 확인 없이 함께 지워집니다.");
   if (workspace.branch) lines.push(`브랜치 ${workspace.branch} 는 저장소에 남습니다.`);
   return lines.join("\n\n");
+}
+
+/**
+ * How far a worktree has drifted: lines added and removed since it left its base branch,
+ * committed or not, untracked files included (Paseo's own count). Nothing when it hasn't.
+ */
+function DiffStat({
+  diff,
+  theme,
+}: {
+  diff: { additions: number; deletions: number } | null;
+  theme: PluginTheme;
+}) {
+  if (!diff || (!diff.additions && !diff.deletions)) return null;
+  return (
+    <View
+      accessibilityLabel={`기준 브랜치 대비 ${diff.additions}줄 추가, ${diff.deletions}줄 삭제`}
+      style={{ flexDirection: "row", gap: 4, flexShrink: 0 }}
+    >
+      {diff.additions ? (
+        <T style={{ fontSize: SMALL, color: theme.colors.statusSuccess }}>+{compact(diff.additions)}</T>
+      ) : null}
+      {diff.deletions ? (
+        <T style={{ fontSize: SMALL, color: theme.colors.statusDanger }}>−{compact(diff.deletions)}</T>
+      ) : null}
+    </View>
+  );
+}
+
+/** 1234 → "1.2k", so a large diff doesn't push the name out. */
+function compact(count: number): string {
+  if (count < 1000) return String(count);
+  const thousands = count / 1000;
+  return `${thousands < 10 ? thousands.toFixed(1).replace(/\.0$/, "") : Math.round(thousands)}k`;
 }
