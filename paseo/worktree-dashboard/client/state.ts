@@ -43,6 +43,20 @@ export function workspaceState(workspace: PluginWorkspaceSnapshot): AgentState |
   return workspaceStates[workspace.indicator];
 }
 
+export function hasCodexQuestion(lines: readonly string[]): boolean {
+  const lastLine = lines.findLastIndex(line => line.trim() !== "");
+  if (lastLine < 0 || lines.length - lastLine > 5) return false;
+
+  // The answer controls are at the bottom of the active Codex overlay. Ignore
+  // prompts found only in earlier terminal output.
+  const tail = lines.slice(Math.max(0, lastLine - 2), lastLine + 1).join(" ");
+  if (!/tab\s+to\s+add\s+notes\s*\|\s*enter\s+to\s+submit\s+answer\s*\|\s*esc\s+to\s+interrupt\s*$/i.test(tail)) {
+    return false;
+  }
+  return lines.slice(0, lastLine).some(line =>
+    /^\s*Question\s+\d+\s*\/\s*\d+\s*\(\d+\s+unanswered\)\s*$/i.test(line));
+}
+
 export function compareAgents(left: PluginAgentSnapshot, right: PluginAgentSnapshot) {
   return priority[agentState(left)] - priority[agentState(right)] ||
     right.lastActivityAt.localeCompare(left.lastActivityAt);

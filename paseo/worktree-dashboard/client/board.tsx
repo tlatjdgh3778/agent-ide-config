@@ -11,6 +11,7 @@ import {
 } from "@getpaseo/plugin/client";
 import { Icon, ScrollView } from "@getpaseo/plugin/client/ui";
 import { CatSprite } from "./cat-sprite";
+import { useTerminalQuestions } from "./terminal-questions";
 import {
   type AgentNode,
   type AgentState,
@@ -103,6 +104,10 @@ function HostBoard({ host, layout, navigation, theme }: PluginScreenProps) {
   const workspaceKeys = useMemo(() => new Set(
     projects.flatMap(project => project.items.map(workspace => workspace.key)),
   ), [projects]);
+  const workspaceIds = useMemo(() => new Set(
+    projects.flatMap(project => project.items.map(workspace => workspace.id)),
+  ), [projects]);
+  const terminalQuestions = useTerminalQuestions(workspaceIds);
   const agentGroups = useAgents({
     hosts: [host.id],
     where: agent => !agent.background && workspaceKeys.has(agent.workspace.key),
@@ -116,11 +121,11 @@ function HostBoard({ host, layout, navigation, theme }: PluginScreenProps) {
   const supplementalGroups = useWorkspaces({
     hosts: [host.id],
     where: workspace => {
-      const state = workspaceState(workspace);
+      const state = terminalQuestions.has(workspace.id) ? "needs" : workspaceState(workspace);
       return state !== null && workspaceKeys.has(workspace.ref.key) &&
         !agents.has(withinWorkspaceKey(workspace.ref.key, state));
     },
-    groupBy: workspace => workspaceState(workspace) ?? "idle",
+    groupBy: workspace => terminalQuestions.has(workspace.id) ? "needs" : workspaceState(workspace) ?? "idle",
   });
   const supplemental = useMemo(() => new Map(
     supplementalGroups.map(group => [group.key, new Set(group.items.map(ref => ref.key))]),
@@ -143,6 +148,7 @@ function HostBoard({ host, layout, navigation, theme }: PluginScreenProps) {
     <Inspector
       reference={selected}
       agents={agents.get(agentWorkspaceKey(selected.key)) ?? noAgents}
+      terminalQuestion={terminalQuestions.has(selected.id)}
       visual={visual}
       navigation={navigation}
     />
@@ -222,12 +228,15 @@ function HostBoard({ host, layout, navigation, theme }: PluginScreenProps) {
               const count = key === "all" ? workspaceKeys.size : agents.get(stateKey(key))?.length ?? 0;
               const extra = key === "all" ? 0 : supplemental.get(key)?.size ?? 0;
               const label = key === "all" ? (onlyWorktrees ? "전체 워크트리" : "전체 작업 공간") : statusLabels[key];
+              const showCount = count > 0 || extra === 0;
+              const accessibleCount = key === "all" || extra === 0 ? `${count}개` :
+                count > 0 ? `에이전트 ${count}개, 작업 공간 ${extra}곳` : `작업 공간 ${extra}곳`;
               return (
                 <Pressable
                   key={key}
                   accessibilityRole="button"
                   accessibilityState={{ selected: filter === key }}
-                  accessibilityLabel={`${label} ${count}개${extra ? `, 작업 공간 ${extra}곳` : ""}`}
+                  accessibilityLabel={`${label} ${accessibleCount}`}
                   onPress={() => setFilter(key)}
                   style={({ pressed }) => [styles.filter, layout.compact && styles.touchFilter, {
                     borderColor: filter === key ? colors.accent : colors.border,
@@ -238,8 +247,10 @@ function HostBoard({ host, layout, navigation, theme }: PluginScreenProps) {
                     ? <Icon name="Layers" size={15} color={colors.accent} />
                     : <Cat state={key} visual={visual} scale={1} />}
                   <Text style={[styles.caption, { color: colors.foreground }]}>{label}</Text>
-                  <Text style={[styles.number, { color: colors.foregroundMuted }]}>{count}</Text>
-                  {extra > 0 && <Text style={[styles.small, { color: colors.foregroundMuted }]}>· {extra}곳</Text>}
+                  {showCount && <Text style={[styles.number, { color: colors.foregroundMuted }]}>{count}</Text>}
+                  {extra > 0 && <Text style={[styles.small, { color: colors.foregroundMuted }]}>
+                    {showCount ? "· " : ""}{extra}곳
+                  </Text>}
                 </Pressable>
               );
             })}
@@ -274,6 +285,7 @@ function HostBoard({ host, layout, navigation, theme }: PluginScreenProps) {
                               reference={reference}
                               agents={agents.get(agentWorkspaceKey(reference.key)) ?? noAgents}
                               agentGroups={agents}
+                              terminalQuestion={terminalQuestions.has(reference.id)}
                               selected={selected?.key === reference.key}
                               onSelect={() => setSelectedKey(reference.key)}
                               visual={visual}
@@ -300,10 +312,11 @@ function Cat({ state, visual, scale }: { state: AgentState; visual: Visual; scal
   return <CatSprite state={state} mode={visual.mode} markColor={visual.tones[state]} scale={scale} />;
 }
 
-function WorkspaceCard({ reference, agents, agentGroups, selected, onSelect, visual }: {
+function WorkspaceCard({ reference, agents, agentGroups, terminalQuestion, selected, onSelect, visual }: {
   reference: WorkspaceRef;
   agents: readonly AgentRef[];
   agentGroups: ReadonlyMap<string, readonly AgentRef[]>;
+  terminalQuestion: boolean;
   selected: boolean;
   onSelect(): void;
   visual: Visual;
@@ -313,12 +326,14 @@ function WorkspaceCard({ reference, agents, agentGroups, selected, onSelect, vis
   const { colors } = visual;
   const title = workspace.title ?? workspace.name;
   const state = workspaceState(workspace);
-  const showWorkspaceState = state !== null && !agentGroups.has(withinWorkspaceKey(reference.key, state));
+  const showWorkspaceState = state !== null && !(terminalQuestion && state === "needs") &&
+    !agentGroups.has(withinWorkspaceKey(reference.key, state));
   const statusSummary = filters.flatMap(key => {
     if (key === "all") return [];
     const count = agentGroups.get(withinWorkspaceKey(reference.key, key))?.length ?? 0;
     return count ? [`${statusLabels[key]} ${count}개`] : [];
   });
+  if (terminalQuestion) statusSummary.push("Codex 터미널 입력 필요");
   if (showWorkspaceState) statusSummary.push(`작업 공간 ${statusLabels[state]}`);
   const branch = workspace.kind === "worktree" ? workspace.branch ?? kinds.worktree :
     [kinds[workspace.kind], workspace.branch].filter(Boolean).join(" · ");
@@ -344,6 +359,13 @@ function WorkspaceCard({ reference, agents, agentGroups, selected, onSelect, vis
         <Text style={[styles.small, { color: colors.foregroundMuted }]}>{agents.length}개</Text>
       </View>
       <View style={[styles.agentList, { borderTopColor: colors.border }]}>
+        {terminalQuestion && (
+          <View style={styles.agentRow}>
+            <Cat state="needs" visual={visual} />
+            <Text style={[styles.agentName, { color: colors.foreground }]}>Codex 터미널 질문</Text>
+            <Text style={[styles.small, { color: visual.tones.needs }]}>{statusLabels.needs}</Text>
+          </View>
+        )}
         {agents.map(ref => <AgentLine key={ref.key} reference={ref} visual={visual} />)}
         {showWorkspaceState && (
           <View style={styles.agentRow}>
@@ -352,7 +374,7 @@ function WorkspaceCard({ reference, agents, agentGroups, selected, onSelect, vis
             <Text style={[styles.small, { color: visual.tones[state] }]}>{statusLabels[state]}</Text>
           </View>
         )}
-        {agents.length === 0 && !showWorkspaceState && (
+        {agents.length === 0 && !showWorkspaceState && !terminalQuestion && (
           <Text style={[styles.emptyAgents, { color: colors.foregroundMuted }]}>에이전트 없음</Text>
         )}
       </View>
@@ -373,9 +395,10 @@ function AgentLine({ reference, visual }: { reference: AgentRef; visual: Visual 
   );
 }
 
-function Inspector({ reference, agents, navigation, visual }: {
+function Inspector({ reference, agents, terminalQuestion, navigation, visual }: {
   reference: WorkspaceRef;
   agents: readonly AgentRef[];
+  terminalQuestion: boolean;
   navigation: Navigation;
   visual: Visual;
 }) {
@@ -403,6 +426,9 @@ function Inspector({ reference, agents, navigation, visual }: {
         <Text style={[styles.branch, { color: colors.foregroundMuted }]}>{workspace.branch ?? kinds[workspace.kind]}</Text>
       </View>
       <View style={styles.inspectorBody}>
+        {terminalQuestion && (
+          <Text style={[styles.caption, { color: visual.tones.needs }]}>Codex 터미널에서 응답을 기다리고 있습니다.</Text>
+        )}
         <Text accessibilityRole="header" style={[styles.sectionTitle, { color: colors.foreground }]}>에이전트 관계</Text>
         {tree.length ? tree.map(node => (
           <TreeNode key={node.ref.key} node={node} navigation={navigation} visual={visual} />
