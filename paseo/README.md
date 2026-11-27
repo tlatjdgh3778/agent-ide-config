@@ -6,6 +6,7 @@ Paseo 구성입니다. Paseo 플러그인은 운영체제와 관계없이 같은
 |---|---|
 | [`project-groups/`](project-groups/) | 그룹 → 프로젝트 → 작업 공간 사이드바. [topar12/paseo-project-groups](https://github.com/topar12/paseo-project-groups) 1.5.0 사본에 워크트리 기능 추가 |
 | [`worktree-dashboard/`](worktree-dashboard/) | 프로젝트별 워크트리 카드와 검정고양이 에이전트 상태 보드 |
+| [`skills-panel/`](skills-panel/) | 오른쪽 Explorer에서 Codex 세션의 스킬 목록 검색 |
 
 ## 구성
 
